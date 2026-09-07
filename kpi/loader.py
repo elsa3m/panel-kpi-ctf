@@ -1,0 +1,421 @@
+"""
+Carga de los Excel del panel.
+
+- MOV-FIBRA  -> tabla de KPIs por tienda y ejecutivo (hoja MOV-FIBRA), metas,
+                fichas, EPA, BASE P EPA y CIERRE BONOS.
+- FIBRA DRIVE-> solicitudes de fibra (AVANCE FIBRAS), resumen por tienda /
+                ejecutivo (RESUMEN), evolutivo diario (EVOLUTIVO).
+- ESCUCHAS   -> resultados de escuchas por ejecutivo (opcional).
+
+Todas las funciones devuelven diccionarios / DataFrames "limpios" para que la
+app no tenga que conocer la estructura del Excel.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import openpyxl
+import pandas as pd
+
+from . import columns as C
+from .config import FUENTES, DATA_DIR
+
+
+# ---------------------------------------------------------------------------
+# utilidades
+# ---------------------------------------------------------------------------
+def _num(v, default=None):
+    """Convierte a float; textos como '#REF!', '#N/A', '' -> default."""
+    if v is None:
+        return default
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    if isinstance(v, (dt.datetime, dt.date, dt.time)):
+        return default
+    s = str(v).strip().replace("%", "").replace(".", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return default
+
+
+def _txt(v) -> str:
+    if v is None:
+        return ""
+    return str(v).strip()
+
+
+def _fecha(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NaT:
+        return None
+    if isinstance(v, dt.datetime):
+        return v.date()
+    if isinstance(v, dt.date):
+        return v
+    if isinstance(v, (int, float)) and 30000 < v < 80000:      # serial Excel
+        return (dt.datetime(1899, 12, 30) + dt.timedelta(days=int(v))).date()
+    if isinstance(v, str):
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return dt.datetime.strptime(v.strip()[:10], fmt).date()
+            except ValueError:
+                pass
+    return None
+
+
+def _pdv(v) -> str:
+    """Código de tienda como texto sin decimales ('5003')."""
+    n = _num(v)
+    if n is not None and float(n).is_integer():
+        return str(int(n))
+    return _txt(v)
+
+
+def _norm(s: str) -> str:
+    """Normaliza encabezados para comparar (mayúsculas, sin acentos ni espacios extra)."""
+    s = _txt(s).upper()
+    s = re.sub(r"[ÁÀÄ]", "A", s)
+    s = re.sub(r"[ÉÈË]", "E", s)
+    s = re.sub(r"[ÍÌÏ]", "I", s)
+    s = re.sub(r"[ÓÒÖ]", "O", s)
+    s = re.sub(r"[ÚÙÜ]", "U", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def ruta_fuente(nombre: str) -> Path:
+    return DATA_DIR / FUENTES[nombre]["archivo"]
+
+
+def fuente_disponible(nombre: str) -> bool:
+    return ruta_fuente(nombre).exists()
+
+
+# ---------------------------------------------------------------------------
+# MOV-FIBRA
+# ---------------------------------------------------------------------------
+@dataclass
+class DatosMovFibra:
+    fecha_corte: dt.date | None
+    avance_esperado: float
+    pesos: dict            # clave ficha -> peso
+    topes: dict            # clave ficha -> tope
+    estandares: dict       # clave KPI -> estándar mínimo
+    tiendas: pd.DataFrame  # una fila por tienda
+    ejecutivos: pd.DataFrame  # una fila por ejecutivo
+    total: dict            # fila TOTAL CTF
+    nombres: dict          # código ejecutivo -> nombre completo (hoja METAS)
+    jornadas: dict         # código ejecutivo -> FT / PT (hoja CIERRE BONOS)
+    epa_ejecutivo: pd.DataFrame
+    encuestas: pd.DataFrame
+    archivo: str = ""
+    avisos: list = field(default_factory=list)
+
+
+def _leer_mov_fibra(ws, avisos: list) -> tuple[pd.DataFrame, dict]:
+    rows = list(ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True))
+    header = rows[C.HEADER_ROW - 1]
+
+    # validar encabezados
+    for clave, (col, esperado) in C.COLS.items():
+        if esperado is None:
+            continue
+        real = header[col - 1] if col - 1 < len(header) else None
+        if _norm(real) != _norm(esperado):
+            avisos.append(f"MOV-FIBRA col {col} ({clave}): se esperaba '{esperado}' y se encontró '{_txt(real)}'.")
+
+    registros = []
+    for r in rows[C.FIRST_DATA_ROW - 1:]:
+        pdv = r[C.COLS["pdv"][0] - 1]
+        ejec = _txt(r[C.COLS["ejecutivo"][0] - 1])
+        if pdv in (None, "") or ejec in ("", "0", "#N/A"):
+            continue
+        reg = {}
+        for clave, (col, _) in C.COLS.items():
+            v = r[col - 1] if col - 1 < len(r) else None
+            if clave in ("pdv", "clave", "ejecutivo", "bf_estado"):
+                reg[clave] = _txt(v)
+            else:
+                reg[clave] = _num(v)
+        registros.append(reg)
+
+    df = pd.DataFrame(registros)
+    params = {
+        "fecha_corte": _fecha(rows[C.CELL_FECHA_CORTE[0] - 1][C.CELL_FECHA_CORTE[1] - 1]),
+        "avance_esperado": _num(rows[C.CELL_AVANCE_ESPERADO[0] - 1][C.CELL_AVANCE_ESPERADO[1] - 1], 0.0),
+        "pesos": {k: _num(rows[C.ROW_PESOS_FICHA - 1][C.COLS[k][0] - 1], 0.0) for k, _ in C.FICHA_KPIS},
+        "topes": {k: _num(rows[C.ROW_TOPES_FICHA - 1][C.COLS[k][0] - 1], 0.0) for k, _ in C.FICHA_KPIS},
+        "estandares": {k: _num(rows[C.ROW_ESTANDARES - 1][col - 1]) for k, col in C.ESTANDARES.items()},
+    }
+    return df, params
+
+
+def _leer_metas(wb) -> dict:
+    """Código ejecutivo -> nombre completo (hoja METAS, col E) ."""
+    nombres = {}
+    if "METAS" not in wb.sheetnames:
+        return nombres
+    for r in wb["METAS"].iter_rows(min_row=5, values_only=True):
+        cod = _txt(r[5]) if len(r) > 5 else ""
+        nombre = _txt(r[4]) if len(r) > 4 else ""
+        if cod and nombre and nombre != "#N/A" and cod != nombre:
+            nombres[cod] = nombre
+    return nombres
+
+
+def _leer_jornadas(wb) -> dict:
+    jornadas = {}
+    if "CIERRE BONOS." not in wb.sheetnames:
+        return jornadas
+    for r in wb["CIERRE BONOS."].iter_rows(min_row=5, values_only=True):
+        cod = _txt(r[1]) if len(r) > 1 else ""
+        cargo = _txt(r[5]) if len(r) > 5 else ""
+        if cod.startswith("CMA_") and cargo:
+            jornadas[cod] = cargo
+    return jornadas
+
+
+def _leer_epa(wb) -> pd.DataFrame:
+    """Tabla 'EPA <MES> POR EJECUTIVO' de la hoja EPA."""
+    cols = ["pdv", "ejecutivo", "cep", "q_cep", "venta", "q_venta", "csim", "q_csim",
+            "sstt", "q_sstt", "otros", "q_otros", "actitud", "q_total", "epa"]
+    if "EPA" not in wb.sheetnames:
+        return pd.DataFrame(columns=cols)
+    rows = list(wb["EPA"].iter_rows(values_only=True))
+    inicio = None
+    for i, r in enumerate(rows):
+        if len(r) > 4 and _norm(r[4]) == "USUARIO":
+            inicio = i + 1
+            break
+    if inicio is None:
+        return pd.DataFrame(columns=cols)
+    out = []
+    for r in rows[inicio:]:
+        cod = _txt(r[4]) if len(r) > 4 else ""
+        if not cod.startswith("CMA_"):
+            continue
+        out.append({
+            "pdv": _txt(r[3]), "ejecutivo": cod,
+            "cep": _num(r[6]), "q_cep": _num(r[7], 0), "venta": _num(r[8]), "q_venta": _num(r[9], 0),
+            "csim": _num(r[10]), "q_csim": _num(r[11], 0), "sstt": _num(r[12]), "q_sstt": _num(r[13], 0),
+            "otros": _num(r[14]), "q_otros": _num(r[15], 0), "actitud": _num(r[17]),
+            "q_total": _num(r[18], 0), "epa": _num(r[21]) if len(r) > 21 else None,
+        })
+    return pd.DataFrame(out, columns=cols)
+
+
+def _leer_encuestas(wb) -> pd.DataFrame:
+    """Encuestas individuales (hoja BASE P EPA)."""
+    cols = ["ejecutivo", "nota", "tienda", "fecha", "tipo_atencion", "literal"]
+    if "BASE P EPA" not in wb.sheetnames:
+        return pd.DataFrame(columns=cols)
+    ws = wb["BASE P EPA"]
+    rows = ws.iter_rows(values_only=True)
+    header = [_norm(h) for h in next(rows)]
+
+    def idx(*nombres):
+        for n in nombres:
+            if _norm(n) in header:
+                return header.index(_norm(n))
+        return None
+
+    i_ej, i_nota = idx("Ejecutivo_hom", "Ejecutivo"), idx("Nota")
+    i_tienda, i_fecha = idx("Nombre Tienda", "Tienda"), idx("Fecha Encuenta", "Fecha Encuesta")
+    i_tipo, i_lit = idx("Tipo de Atención"), idx("Literal")
+    out = []
+    for r in rows:
+        ej = _txt(r[i_ej]) if i_ej is not None and i_ej < len(r) else ""
+        if not ej or ej == "0":
+            continue
+        out.append({
+            "ejecutivo": ej,
+            "nota": _num(r[i_nota]) if i_nota is not None else None,
+            "tienda": _txt(r[i_tienda]) if i_tienda is not None else "",
+            "fecha": _fecha(r[i_fecha]) if i_fecha is not None else None,
+            "tipo_atencion": _txt(r[i_tipo]) if i_tipo is not None else "",
+            "literal": _txt(r[i_lit]) if i_lit is not None else "",
+        })
+    return pd.DataFrame(out, columns=cols)
+
+
+def cargar_mov_fibra(path: Path | str) -> DatosMovFibra:
+    path = Path(path)
+    avisos: list[str] = []
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    if "MOV-FIBRA" not in wb.sheetnames:
+        raise ValueError("El archivo no tiene la hoja 'MOV-FIBRA'.")
+
+    df, params = _leer_mov_fibra(wb["MOV-FIBRA"], avisos)
+
+    es_total = df["pdv"].str.upper().eq("CTF")
+    es_tienda = (~es_total) & (df["ejecutivo"] == df["clave"])
+    tiendas = df[es_tienda].copy()
+    ejecutivos = df[(~es_total) & (~es_tienda)].copy()
+
+    # nombre de tienda para cada ejecutivo
+    nombre_tienda = dict(zip(tiendas["pdv"], tiendas["ejecutivo"]))
+    ejecutivos["tienda"] = ejecutivos["pdv"].map(nombre_tienda).fillna("")
+    tiendas["tienda"] = tiendas["ejecutivo"]
+
+    # ejecutivos "activos": con meta móvil asignada
+    ejecutivos["activo"] = ejecutivos["mov_meta"].fillna(0) > 0
+
+    total = df[es_total].iloc[0].to_dict() if es_total.any() else {}
+
+    datos = DatosMovFibra(
+        fecha_corte=params["fecha_corte"],
+        avance_esperado=params["avance_esperado"],
+        pesos=params["pesos"],
+        topes=params["topes"],
+        estandares=params["estandares"],
+        tiendas=tiendas.reset_index(drop=True),
+        ejecutivos=ejecutivos.reset_index(drop=True),
+        total=total,
+        nombres=_leer_metas(wb),
+        jornadas=_leer_jornadas(wb),
+        epa_ejecutivo=_leer_epa(wb),
+        encuestas=_leer_encuestas(wb),
+        archivo=path.name,
+        avisos=avisos,
+    )
+    wb.close()
+    return datos
+
+
+# ---------------------------------------------------------------------------
+# FIBRA DRIVE
+# ---------------------------------------------------------------------------
+@dataclass
+class DatosFibra:
+    solicitudes: pd.DataFrame      # AVANCE FIBRAS (una fila por solicitud)
+    resumen: pd.DataFrame          # RESUMEN (tiendas y ejecutivos)
+    evolutivo: pd.DataFrame        # EVOLUTIVO (solicitudes por día)
+    fecha_actualizacion: dt.date | None
+    archivo: str = ""
+
+
+def _df_desde_hoja(ws, header_row: int) -> pd.DataFrame:
+    rows = list(ws.iter_rows(values_only=True))
+    if len(rows) < header_row:
+        return pd.DataFrame()
+    header = [_norm(h) or f"COL{i+1}" for i, h in enumerate(rows[header_row - 1])]
+    # encabezados duplicados -> sufijo
+    vistos = {}
+    for i, h in enumerate(header):
+        if h in vistos:
+            vistos[h] += 1
+            header[i] = f"{h}_{vistos[h]}"
+        else:
+            vistos[h] = 1
+    data = [list(r) + [None] * (len(header) - len(r)) for r in rows[header_row:]]
+    df = pd.DataFrame(data, columns=header)
+    return df.dropna(how="all")
+
+
+def cargar_fibra(path: Path | str) -> DatosFibra:
+    path = Path(path)
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+
+    sol = _df_desde_hoja(wb["AVANCE FIBRAS"], 2) if "AVANCE FIBRAS" in wb.sheetnames else pd.DataFrame()
+    if not sol.empty:
+        sol = sol.rename(columns={
+            "MES": "mes", "MES INST": "mes_inst", "FECHA DE SOLICITUD": "fecha_solicitud",
+            "COD_SS": "pdv", "NOMBRE EJECUTIVO": "ejecutivo", "FECHA DE INSTALACION": "fecha_instalacion",
+            "ESTADO": "estado", "INCLUYE TV": "incluye_tv", "ESTATUS": "estatus",
+            "TIPO DE RECHAZO": "tipo_rechazo", "MOTIVO": "motivo",
+        })
+        sol["fecha_solicitud"] = sol["fecha_solicitud"].map(_fecha).astype(object)
+        sol["fecha_instalacion"] = sol["fecha_instalacion"].map(_fecha).astype(object)
+        sol["pdv"] = sol["pdv"].map(_pdv)
+        sol["ejecutivo"] = sol["ejecutivo"].map(_txt)
+        sol = sol[sol["ejecutivo"] != ""]
+        # quitamos columnas con datos personales que el panel no usa
+        sol = sol.drop(columns=[c for c in ("RUT", "ID") if c in sol.columns])
+
+    res = _df_desde_hoja(wb["RESUMEN"], 2) if "RESUMEN" in wb.sheetnames else pd.DataFrame()
+    if not res.empty:
+        res = res.rename(columns={
+            "COD_SS": "pdv", "META SOLICIT.": "meta_sol", "DEBEN LLEVAR (SOLIC.)": "deben_sol",
+            "SOLICITUDES OK": "sol_ok", "RECHAZO": "rechazo", "RECONT.": "recont",
+            "META FIBRA": "meta_fibra", "REAL FIBRA NO AFINIDAD": "real_no_af",
+            "REAL FIBRA AFINIDAD": "real_af", "REAL FIBRA": "real_fibra", "% CUMP.": "cump",
+            "PROY.": "proy", "DEBEN LLEVAR INST.": "deben_inst", "META TV": "meta_tv",
+            "REAL TV": "real_tv", "% CUMP._2": "cump_tv", "ATT": "att_tv",
+        })
+        res["pdv"] = res["pdv"].map(_pdv)
+        # columna F (índice 5) trae el nombre de tienda o el código de ejecutivo
+        res["nombre"] = res.iloc[:, 5].map(_txt)
+        res["es_ejecutivo"] = res["nombre"].str.startswith("CMA_")
+        for c in ("meta_sol", "deben_sol", "sol_ok", "rechazo", "recont", "meta_fibra",
+                  "real_no_af", "real_af", "real_fibra", "cump", "deben_inst",
+                  "meta_tv", "real_tv", "cump_tv", "att_tv"):
+            if c in res.columns:
+                res[c] = res[c].map(_num)
+        res = res[res["nombre"] != ""]
+
+    evo = _df_desde_hoja(wb["EVOLUTIVO"], 2) if "EVOLUTIVO" in wb.sheetnames else pd.DataFrame()
+
+    fecha = None
+    if not sol.empty and sol["fecha_solicitud"].notna().any():
+        fechas = [f for f in sol["fecha_solicitud"] if isinstance(f, dt.date) and pd.notna(f)]
+        fecha = max(fechas) if fechas else None
+    wb.close()
+    return DatosFibra(solicitudes=sol, resumen=res, evolutivo=evo, fecha_actualizacion=fecha, archivo=path.name)
+
+
+# ---------------------------------------------------------------------------
+# ESCUCHAS ENTEL (opcional)
+# ---------------------------------------------------------------------------
+ESCUCHAS_COLS = ["ejecutivo", "tienda", "latam_pass", "hogar", "fibra_calidad", "fibra_estabilidad",
+                 "porta_motivo", "porta_objeciones", "porta_urgencia"]
+ESCUCHAS_ALIAS = {
+    "ejecutivo": ["EJECUTIVO", "USUARIO", "COD EJECUTIVO"],
+    "tienda": ["TIENDA", "PDV", "NOMBRE TIENDA"],
+    "latam_pass": ["LATAM PASS", "LATAM"],
+    "hogar": ["HOGAR"],
+    "fibra_calidad": ["FIBRA CALIDAD", "CALIDAD"],
+    "fibra_estabilidad": ["FIBRA ESTABILIDAD", "ESTABILIDAD"],
+    "porta_motivo": ["PORTA MOTIVO", "MOTIVO"],
+    "porta_objeciones": ["PORTA OBJECIONES", "OBJECIONES"],
+    "porta_urgencia": ["PORTA URGENCIA", "URGENCIA"],
+}
+
+
+def cargar_escuchas(path: Path | str) -> pd.DataFrame:
+    """
+    Lee un Excel de escuchas. Busca en la primera hoja una fila de encabezados que
+    contenga 'EJECUTIVO' (o 'USUARIO') y toma las columnas por nombre (ver ESCUCHAS_ALIAS).
+    Devuelve un DataFrame con las columnas de ESCUCHAS_COLS; las filas cuyo ejecutivo
+    empieza por 'CANAL' o 'CTF' se interpretan como referencias del canal / de CTF.
+    """
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    rows = list(ws.iter_rows(values_only=True))
+    wb.close()
+    h_idx = None
+    for i, r in enumerate(rows[:30]):
+        normalizados = [_norm(v) for v in r]
+        if any(n in ("EJECUTIVO", "USUARIO", "COD EJECUTIVO") for n in normalizados):
+            h_idx = i
+            break
+    if h_idx is None:
+        return pd.DataFrame(columns=ESCUCHAS_COLS)
+    header = [_norm(v) for v in rows[h_idx]]
+    pos = {}
+    for clave, alias in ESCUCHAS_ALIAS.items():
+        for a in alias:
+            if _norm(a) in header:
+                pos[clave] = header.index(_norm(a))
+                break
+    out = []
+    for r in rows[h_idx + 1:]:
+        reg = {}
+        for clave in ESCUCHAS_COLS:
+            i = pos.get(clave)
+            v = r[i] if i is not None and i < len(r) else None
+            reg[clave] = _txt(v) if clave in ("ejecutivo", "tienda") else _num(v)
+        if reg["ejecutivo"]:
+            out.append(reg)
+    return pd.DataFrame(out, columns=ESCUCHAS_COLS)

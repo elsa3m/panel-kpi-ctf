@@ -1,0 +1,9 @@
+# Excel activos: NO se suben al repositorio (se cargan desde la app)
+data/*.xlsx
+data/*.xlsm
+data/*.txt
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store

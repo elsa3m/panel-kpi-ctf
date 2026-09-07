@@ -1,0 +1,114 @@
+"""
+Reglas de negocio configurables del Panel KPI CTF.
+
+Todo lo que NO se puede deducir del Excel vive aquí, para que se pueda ajustar
+sin tocar el resto del código.
+"""
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Rutas
+# ---------------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"          # aquí se guardan los Excel "activos"
+DATA_DIR.mkdir(exist_ok=True)
+ASSETS_DIR = BASE_DIR / "assets"
+
+# Nombre lógico -> (archivo guardado en data/, descripción, hojas requeridas)
+FUENTES = {
+    "MOV-FIBRA": {
+        "archivo": "mov_fibra.xlsx",
+        "titulo": "MOV-FIBRA",
+        "icono": "📊",
+        "ayuda": "Excel DRIVE TIENDAS <MES> <AÑO> CTF (hoja MOV-FIBRA, METAS, FICHAS, EPA, BASE P EPA, CIERRE BONOS).",
+        "hojas": ["MOV-FIBRA", "METAS"],
+    },
+    "FIBRA DRIVE": {
+        "archivo": "fibra_drive.xlsx",
+        "titulo": "FIBRA DRIVE",
+        "icono": "📡",
+        "ayuda": "Excel FIBRA DRIVE <MES> <AÑO> CTF (hojas AVANCE FIBRAS, RESUMEN, EVOLUTIVO, ESTATUS).",
+        "hojas": ["AVANCE FIBRAS", "RESUMEN"],
+    },
+    "ESCUCHAS ENTEL": {
+        "archivo": "escuchas_entel.xlsx",
+        "titulo": "ESCUCHAS ENTEL",
+        "icono": "🎧",
+        "ayuda": "Excel de escuchas (Latam Pass, Hogar, Fibra calidad/estabilidad, Portabilidad motivo/objeciones/urgencia).",
+        "hojas": [],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Tramos de cumplimiento de la ficha (hoja CIERRE BONOS, columnas Y:AA).
+# Lista de (límite inferior, tramo). Se evalúa de mayor a menor.
+# Tabla confirmada por Coordinación CTF (septiembre 2026).
+# ---------------------------------------------------------------------------
+TRAMOS = [
+    (1.20, 7),   # >= 120 %
+    (1.10, 6),   # 110 % - 119,99 %
+    (1.05, 5),   # 105 % - 109,99 %
+    (1.00, 4),   # 100 % - 104,99 %
+    (0.95, 3),   #  95 % -  99,99 %
+    (0.90, 2),   #  90 % -  94,99 %
+    (0.80, 1),   #  80 % -  89,99 %
+    (0.00, 0),   # <= 79,9 %
+]
+
+def tramo_de(cumplimiento: float) -> int:
+    """Devuelve el tramo (0..7) según el % de cumplimiento ponderado de la ficha."""
+    if cumplimiento is None:
+        return 0
+    for limite, tramo in TRAMOS:
+        if cumplimiento >= limite:
+            return tramo
+    return 0
+
+def etiqueta_cumplimiento(cumplimiento: float) -> str:
+    if cumplimiento is None:
+        return "SIN DATO"
+    if cumplimiento >= 1.0:
+        return "CUMPLE"
+    if cumplimiento >= 0.8:
+        return "EN TRAMO"
+    return "BAJO CUMPLIMIENTO"
+
+# ---------------------------------------------------------------------------
+# Bonos (hoja FICHAS). Montos en pesos chilenos.
+# ---------------------------------------------------------------------------
+BONO_PORTA = {"FULL": 60_000, "PT": 30_000}            # al cumplir META BONO PORTA
+BONO_WINNER = {"FULL": 40_000, "PT": 20_000}           # al cumplir 100 % acumulado (tope 120 % c/u)
+BONO_FOCO = [                                           # (mínimo de % bono foco, monto FULL, monto PT)
+    (1.00, 100_000, 50_000),
+    (0.90,  80_000, 40_000),
+    (0.80,  40_000, 20_000),
+]
+TOPE_KPI_FICHA = 1.30        # MAX 130 % en cada KPI de la ficha
+TOPE_FIBRA_FICHA = 1.50      # FIBRA MAX 150 %
+FIBRA_MINIMO_FICHA = 0.50    # REAL FIBRA (<50 % CUMP = 0 %)
+
+# ---------------------------------------------------------------------------
+# Alertas / prioridades del corte
+# ---------------------------------------------------------------------------
+FOCOS = ["MOVILIDAD", "FIBRA", "EQUIPOS", "SEGUROS", "ACCESORIOS"]
+
+# Umbrales fijos de fibra que no vienen en la fila 4
+ESTANDAR_TASA_INSTALACION = 0.75
+ESTANDAR_PCT_FACTIBLES = 0.50
+
+# ---------------------------------------------------------------------------
+# Apariencia
+# ---------------------------------------------------------------------------
+COLORES = {
+    "fondo": "#050b1a",
+    "card": "#0b1631",
+    "borde": "#1e3a8a",
+    "cyan": "#22d3ee",
+    "verde": "#84cc16",
+    "amarillo": "#facc15",
+    "rojo": "#f43f5e",
+    "morado": "#a78bfa",
+    "naranjo": "#fb923c",
+    "texto": "#e5e7eb",
+    "texto2": "#9ca3af",
+}
