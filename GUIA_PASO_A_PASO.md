@@ -96,7 +96,8 @@ Se abre el navegador en `http://localhost:8501`. Deja la ventana negra abierta m
 1. Abre el desplegable **📁 GESTIÓN DE ARCHIVOS**.
 2. En **MOV-FIBRA** sube `DRIVE TIENDAS SEPTIEMBRE 2026 CTF (1RA).xlsx`.
 3. En **FIBRA DRIVE** sube `FIBRA DRIVE SEPTIEMBRE 2026 CTF.xlsx`.
-4. En **ESCUCHAS ENTEL** sube el Excel de escuchas (opcional; si no está, la sección Escuchas muestra un aviso).
+4. En **ESCUCHAS ENTEL** sube el export del Power BI `Adherencia KPIs Hogar por PDV - Ejecutivo.xlsx` (opcional).
+5. En **COLABORADORES** sube `DOTACIÓN CTF TECNOLOGIA <AÑO> (COMPLETO).xlsx` (opcional): completa la antigüedad y el cumpleaños en la ficha del ejecutivo.
 
 Los archivos quedan copiados dentro de `data/` con nombres fijos (`mov_fibra.xlsx`, `fibra_drive.xlsx`, `escuchas_entel.xlsx`). Para actualizar el mes solo vuelves a subir el archivo nuevo.
 
@@ -139,6 +140,34 @@ Debe imprimir `OK: todos los KPI de CMA_EMONTILVA coinciden con el panel origina
 | EVOLUTIVO | Solicitudes por día (disponible en `fib.evolutivo` si quieres graficarlo) |
 
 ### 3.4 Archivo ESCUCHAS ENTEL
+
+Es el export del informe de Power BI **"Adherencia KPIs Hogar por PDV - Ejecutivo"** (en la visualización: ⋯ → *Exportar datos* → Excel). La app lee la hoja `Export` y clasifica cada fila:
+
+| Fila | Cómo se reconoce | Uso |
+|---|---|---|
+| Ejecutivo | `agent_id` = `CMA_…` | Tarjetas de escuchas del ejecutivo |
+| Tienda | `agent_id` = `Total` y `PDV` = `5245 - Arauco Maipú` | Referencia "Tienda" |
+| CTF | `PDV` = `Total` | Referencia "CTF" |
+
+Columnas usadas: *KPI Foco N Auditadas, Starlink % Todas, Latam Pass % Todas, Motivo Hogar %, Fibra Calidad %, Fibra Estabilidad %, Motivo Portabilidad %, Porta Objeciones %, Porta Urgencia %*.
+
+> La referencia **"Canal"** que muestra el panel original no viene en este export porque el informe está filtrado por `socio es CTF TECNOLOGIA SPA`. Para tenerla, exporta el mismo visual quitando ese filtro y agrega esas filas al archivo.
+
+### 3.5 Archivo COLABORADORES (DOTACIÓN)
+
+Completa **antigüedad** y **cumpleaños** en la ficha del ejecutivo. La app lee la hoja `DOTACIÓN` y usa el encabezado de la fila 2.
+
+| Columna del Excel | Uso en el panel |
+|---|---|
+| IDENTIDAD RED | Código `CMA_…` que enlaza con MOV-FIBRA |
+| NOMBRE COMPLETO | Nombre del ejecutivo |
+| FECHA INGRESO | Antigüedad ("9 meses", "2 años, 3 meses") |
+| FECHA NACIMIENTO | Cumpleaños ("16 de abril · en 12 días") |
+| JORNADA | Full-time / Part-time |
+
+> **Importante — datos personales.** La planilla de dotación contiene RUT, direcciones, teléfonos, contactos de emergencia y credenciales. Al subirla, la app **extrae solo las cinco columnas de la tabla anterior y guarda únicamente esa versión reducida**; el archivo original nunca se escribe en el servidor. Además, `data/` está excluido del repositorio por el `.gitignore`, así que estos datos no llegan a GitHub. Aun así, evita dejar copias del archivo completo en carpetas compartidas.
+
+### 3.6 Archivo ESCUCHAS — formato antiguo
 
 No estaba en la carpeta, así que la app espera una hoja con una fila de encabezados que contenga **EJECUTIVO** (o USUARIO) y columnas **LATAM PASS, HOGAR, CALIDAD, ESTABILIDAD, MOTIVO, OBJECIONES, URGENCIA**. Las filas cuyo "ejecutivo" sea `CANAL` o `CTF` se usan como referencias del canal y de CTF, y la fila con el nombre de la tienda como referencia de tienda. Si tu archivo real tiene otro formato, ajusta `ESCUCHAS_ALIAS` en `kpi/loader.py` (o pásamelo y lo adapto).
 

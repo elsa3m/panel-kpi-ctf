@@ -32,3 +32,5 @@ Repositorio en GitHub → https://share.streamlit.io → *Create app* → `app.p
 - `kpi/metrics.py` — bonos, alertas, prioridades del corte.
 - `kpi/ui.py` — CSS y tarjetas.
 - `kpi/pdf.py` — ficha PDF.
+
+Fuentes de datos (todas se cargan desde la app): **MOV-FIBRA** (DRIVE TIENDAS), **FIBRA DRIVE**, **ESCUCHAS ENTEL** (export de Power BI) y **COLABORADORES** (dotación; solo se guardan código, nombre, ingreso, nacimiento y jornada).

@@ -47,6 +47,48 @@ def fecha_txt(f: dt.date | None) -> str:
     return f.strftime("%d/%m/%Y") if f else "—"
 
 
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+         "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def antiguedad(ingreso: dt.date | None, hoy: dt.date | None = None) -> str:
+    """'2 años, 3 meses' a partir de la fecha de ingreso."""
+    if not isinstance(ingreso, dt.date):
+        return "Por completar"
+    hoy = hoy or dt.date.today()
+    anios = hoy.year - ingreso.year
+    meses = hoy.month - ingreso.month
+    if hoy.day < ingreso.day:
+        meses -= 1
+    if meses < 0:
+        anios, meses = anios - 1, meses + 12
+    if anios < 0:
+        return "Por completar"
+    partes = []
+    if anios:
+        partes.append(f"{anios} año" + ("s" if anios != 1 else ""))
+    partes.append(f"{meses} mes" + ("es" if meses != 1 else ""))
+    return ", ".join(partes)
+
+
+def cumpleanos(nacimiento: dt.date | None, hoy: dt.date | None = None) -> tuple[str, str]:
+    """Devuelve ('4 de junio', 'Hoy 🎉' / 'en 12 días' / 'hace 5 días')."""
+    if not isinstance(nacimiento, dt.date):
+        return "Por completar", ""
+    hoy = hoy or dt.date.today()
+    fecha = f"{nacimiento.day} de {MESES[nacimiento.month - 1]}"
+    try:
+        prox = nacimiento.replace(year=hoy.year)
+    except ValueError:                      # 29 de febrero
+        prox = nacimiento.replace(year=hoy.year, day=28)
+    dias = (prox - hoy).days
+    if dias == 0:
+        return fecha, "¡Hoy! 🎉"
+    if dias > 0:
+        return fecha, f"en {dias} día" + ("s" if dias != 1 else "")
+    return fecha, f"hace {-dias} día" + ("s" if dias != -1 else "")
+
+
 def ceil_pos(x) -> int:
     return max(0, int(math.ceil(v(x) - 1e-9)))
 

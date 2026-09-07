@@ -34,8 +34,16 @@ FUENTES = {
         "archivo": "escuchas_entel.xlsx",
         "titulo": "ESCUCHAS ENTEL",
         "icono": "🎧",
-        "ayuda": "Excel de escuchas (Latam Pass, Hogar, Fibra calidad/estabilidad, Portabilidad motivo/objeciones/urgencia).",
+        "ayuda": "Export del Power BI 'Adherencia KPIs Hogar por PDV - Ejecutivo' (hoja Export).",
         "hojas": [],
+    },
+    "COLABORADORES": {
+        "archivo": "colaboradores.xlsx",
+        "titulo": "COLABORADORES",
+        "icono": "👥",
+        "ayuda": "Excel DOTACIÓN CTF. Solo se guardan código, nombre, fecha de ingreso, fecha de nacimiento y jornada; el resto de los datos personales se descarta al cargar.",
+        "hojas": ["DOTACIÓN"],
+        "reducir": True,
     },
 }
 

@@ -38,11 +38,17 @@ def _cargar_escuchas(path: str, mtime: float):
     return loader.cargar_escuchas(path)
 
 
+@st.cache_data(show_spinner="Leyendo COLABORADORES…")
+def _cargar_colab(path: str, mtime: float):
+    return loader.cargar_colaboradores(path)
+
+
 def cargar(nombre: str):
     p = loader.ruta_fuente(nombre)
     if not p.exists():
         return None
-    fn = {"MOV-FIBRA": _cargar_mov, "FIBRA DRIVE": _cargar_fibra, "ESCUCHAS ENTEL": _cargar_escuchas}[nombre]
+    fn = {"MOV-FIBRA": _cargar_mov, "FIBRA DRIVE": _cargar_fibra,
+          "ESCUCHAS ENTEL": _cargar_escuchas, "COLABORADORES": _cargar_colab}[nombre]
     try:
         return fn(str(p), p.stat().st_mtime)
     except Exception as ex:  # noqa: BLE001
@@ -77,10 +83,19 @@ with st.expander("📁 GESTIÓN DE ARCHIVOS", expanded=False):
                                   key=f"up_{nombre}", help=meta["ayuda"])
         destino = loader.ruta_fuente(nombre)
         if subido is not None:
-            destino.write_bytes(subido.getbuffer())
+            if meta.get("reducir"):
+                # solo se guardan las columnas que usa el panel; el resto se descarta
+                try:
+                    n = loader.guardar_colaboradores_reducido(subido.getvalue(), destino)
+                    st.success(f"{subido.name}: guardados {n} colaboradores (solo código, nombre, ingreso, nacimiento y jornada).")
+                except Exception as ex:  # noqa: BLE001
+                    st.error(f"No se pudo procesar {subido.name}: {ex}")
+                    destino.unlink(missing_ok=True)
+            else:
+                destino.write_bytes(subido.getbuffer())
+                st.success(f"{subido.name} guardado como {meta['titulo']}.")
             (destino.with_suffix(".nombre.txt")).write_text(subido.name, encoding="utf-8")
             st.cache_data.clear()
-            st.success(f"{subido.name} guardado como {meta['titulo']}.")
         if destino.exists():
             nombre_original = destino.with_suffix(".nombre.txt")
             nombre_original = nombre_original.read_text(encoding="utf-8") if nombre_original.exists() else destino.name
@@ -98,6 +113,8 @@ with st.expander("📁 GESTIÓN DE ARCHIVOS", expanded=False):
 mov = cargar("MOV-FIBRA")
 fib = cargar("FIBRA DRIVE")
 esc = cargar("ESCUCHAS ENTEL")
+colab = cargar("COLABORADORES")
+COLAB = {} if colab is None or colab.empty else {r["ejecutivo"]: r for _, r in colab.iterrows()}
 
 if mov is None:
     st.warning("Carga el Excel **MOV-FIBRA** en *Gestión de archivos* para comenzar.")
@@ -294,48 +311,62 @@ def bloque_ene_prot_epa(row):
         ], 2), "cyan")
 
 
-def bloque_escuchas(clave: str, tienda: str, titulo: str = "ESCUCHAS"):
+def bloque_escuchas(clave: str, pdv: str, titulo: str = "ESCUCHAS"):
+    """clave = código CMA_ del ejecutivo, código de tienda, o 'CTF'."""
     ui.seccion("🎧", titulo)
     if esc is None or esc.empty:
-        st.info("Carga el Excel **ESCUCHAS ENTEL** en *Gestión de archivos* para ver Escuchas auditadas, Starlink, Latam Pass, Hogar, Fibra y Portabilidad.")
+        st.info("Carga el Excel **ESCUCHAS ENTEL** (export del Power BI) en *Gestión de archivos* "
+                "para ver Escuchas auditadas, Starlink, Latam Pass, Hogar, Fibra y Portabilidad.")
         return
-    fila = esc[esc["ejecutivo"].str.upper() == clave.upper()]
+    fila = esc[esc["clave"].astype(str).str.upper() == str(clave).upper()]
     if fila.empty:
-        st.info("No hay escuchas registradas para esta selección.")
+        st.info("No hay escuchas registradas para esta selección en el export cargado.")
         return
     r = fila.iloc[0]
 
-    def ref(nombre):
-        f_ = esc[esc["ejecutivo"].str.upper() == str(nombre).upper()]
+    def ref(nivel, filtro_pdv=None):
+        f_ = esc[esc["nivel"] == nivel]
+        if filtro_pdv is not None:
+            f_ = f_[f_["pdv"] == filtro_pdv]
         return f_.iloc[0] if not f_.empty else None
 
-    t, canal, ctf = ref(tienda), ref("CANAL"), ref("CTF")
+    t = ref("tienda", pdv) if r["nivel"] == "ejecutivo" else None
+    canal, ctf = ref("canal"), ref("ctf")
 
     def refs(col, fmt=lambda x: pct(x, 1)):
         partes = []
-        if t is not None and t is not r:
+        if t is not None:
             partes.append(f"Tienda <span class='t-cyan'>{fmt(t[col])}</span>")
         if canal is not None:
             partes.append(f"Canal <span class='t-cyan'>{fmt(canal[col])}</span>")
-        if ctf is not None:
+        if ctf is not None and r["nivel"] != "ctf":
             partes.append(f"CTF <span class='t-cyan'>{fmt(ctf[col])}</span>")
-        return "<br>".join(partes)
+        return " · ".join(partes)
 
     cols = st.columns(6)
     with cols[0]:
-        ui.card(f'<div class="h">🎧 ESCUCHAS AUDITADAS</div><div class="big t-verde">{entero(r["auditadas"])}</div><div class="sub">{refs("auditadas", entero)}</div>', "cyan")
+        ui.card(f'<div class="h">🎧 ESCUCHAS AUDITADAS</div><div class="big t-verde">{entero(r["auditadas"])}</div>'
+                f'<div class="sub" style="font-size:.72rem">{refs("auditadas", entero)}</div>', "cyan")
     with cols[1]:
-        ui.card(f'<div class="h">🛰️ STARLINK</div><div class="big t-verde">{pct(r["starlink"], 1)}</div><div class="sub">{refs("starlink")}</div>', "cyan")
+        ui.card(f'<div class="h">🛰️ STARLINK</div><div class="big t-verde">{pct(r["starlink"], 1)}</div>'
+                f'<div class="sub" style="font-size:.72rem">{refs("starlink")}</div>', "cyan")
     with cols[2]:
-        ui.card(f'<div class="h">✈️ LATAM PASS</div><div class="big t-verde">{pct(r["latam_pass"], 1)}</div><div class="sub">{refs("latam_pass")}</div>', "cyan")
+        ui.card(f'<div class="h">✈️ LATAM PASS</div><div class="big t-verde">{pct(r["latam_pass"], 1)}</div>'
+                f'<div class="sub" style="font-size:.72rem">{refs("latam_pass")}</div>', "cyan")
     with cols[3]:
-        ui.card(f'<div class="h">🏠 HOGAR</div><div class="big t-verde">{pct(r["hogar"], 1)}</div><div class="sub">{refs("hogar")}</div>', "cyan")
+        ui.card(f'<div class="h">🏠 HOGAR</div><div class="big t-verde">{pct(r["hogar"], 1)}</div>'
+                f'<div class="sub" style="font-size:.72rem">{refs("hogar")}</div>', "cyan")
     with cols[4]:
-        ui.card('<div class="h">📡 FIBRA</div>' + grid([celda("Calidad", pct(r["fibra_calidad"], 1), color="t-amarillo"), celda("Estabilidad", pct(r["fibra_estabilidad"], 1), color="t-amarillo")], 2)
-                + f'<div class="sub" style="margin-top:.3rem;font-size:.72rem">{refs("fibra_calidad")}</div>', "cyan")
+        ui.card('<div class="h">📡 FIBRA</div>'
+                + grid([celda("Calidad", pct(r["fibra_calidad"], 1), color="t-amarillo"),
+                        celda("Estabilidad", pct(r["fibra_estabilidad"], 1), color="t-amarillo")], 2)
+                + f'<div class="sub" style="margin-top:.3rem;font-size:.7rem">{refs("fibra_calidad")}</div>', "cyan")
     with cols[5]:
-        ui.card('<div class="h">📲 PORTABILIDAD</div>' + grid([celda("Motivo", pct(r["porta_motivo"], 1), color="t-amarillo"), celda("Objeciones", pct(r["porta_objeciones"], 1), color="t-amarillo"), celda("Urgencia", pct(r["porta_urgencia"], 1), color="t-amarillo")], 3)
-                + f'<div class="sub" style="margin-top:.3rem;font-size:.72rem">{refs("porta_motivo")}</div>', "cyan")
+        ui.card('<div class="h">📲 PORTABILIDAD</div>'
+                + grid([celda("Motivo", pct(r["porta_motivo"], 1), color="t-amarillo"),
+                        celda("Objeciones", pct(r["porta_objeciones"], 1), color="t-amarillo"),
+                        celda("Urgencia", pct(r["porta_urgencia"], 1), color="t-amarillo")], 3)
+                + f'<div class="sub" style="margin-top:.3rem;font-size:.7rem">{refs("porta_motivo")}</div>', "cyan")
 
 
 def bloque_epa_encuestas(codigo: str):
@@ -499,8 +530,16 @@ def vista_ejecutivo():
 
     md(f'<div class="card" style="padding:.6rem 1rem">Tienda: <b>{h(tienda)}</b> · Ejecutivos en esta tienda: <b>{len(ej_tienda)}</b></div>')
 
-    minis = [mini("👤 Nombre", h(nombre or "Por completar")), mini("⏳ Antigüedad", "Por completar"),
-             mini("🕒 Jornada", jornada), mini("🎂 Cumpleaños", "Por completar")]
+    c_ = COLAB.get(codigo)
+    hoy = mov.fecha_corte or dt.date.today()
+    antig = M.antiguedad(c_["fecha_ingreso"], hoy) if c_ is not None else "Por completar"
+    cumple, cuando_cumple = M.cumpleanos(c_["fecha_nacimiento"], hoy) if c_ is not None else ("Por completar", "")
+    if c_ is not None and c_["nombre"]:
+        nombre = nombre or c_["nombre"]
+    minis = [mini("👤 Nombre", h(nombre or "Por completar")),
+             mini("⏳ Antigüedad", h(antig)),
+             mini("🕒 Jornada", jornada),
+             mini("🎂 Cumpleaños", h(cumple) + (f'<div class="t-cyan" style="font-size:.7rem">{h(cuando_cumple)}</div>' if cuando_cumple else ""))]
     rf = M.resumen_fibra_ejecutivo(fib.solicitudes if fib else None, codigo, mov.fecha_corte)
     bloque_cabecera(e, f"PDV {pdv}", tienda, "EJECUTIVO SELECCIONADO", codigo, minis, "", f, rf)
 
@@ -511,7 +550,7 @@ def vista_ejecutivo():
     bloque_fibra(e)
     bloque_equipos_seguros_acc(e, avance)
     bloque_ene_prot_epa(e)
-    bloque_escuchas(codigo, tienda)
+    bloque_escuchas(codigo, pdv)
     bloque_epa_encuestas(codigo)
     bloque_prioridades(e)
     md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Ejecutivo · {h(tienda)} · Ejecutivos: {len(ej_tienda)}</div>')
@@ -529,12 +568,12 @@ def vista_tiendas():
         row = pd.Series(mov.total)
         ej = ejecutivos
         titulo, pdv_txt, sub_pdv, nombre_grande = "EMPRESA TOTAL", "PDV CTF", "CTF EMPRESA TOTAL", "CTF EMPRESA TOTAL"
-        escucha_clave = "CTF"
+        escucha_clave, escucha_pdv = "CTF", ""
     else:
         row = tiendas[tiendas["pdv"] == sel].iloc[0]
         ej = ejecutivos[ejecutivos["pdv"] == sel]
         titulo, pdv_txt, sub_pdv, nombre_grande = "TIENDA", f"PDV {sel}", nombre_tienda[sel], nombre_tienda[sel]
-        escucha_clave = nombre_tienda[sel]
+        escucha_clave, escucha_pdv = sel, sel
 
     # cumplimiento ponderado de la tienda / empresa = promedio de sus ejecutivos
     f = {
@@ -556,7 +595,7 @@ def vista_tiendas():
     tabla_cumplimientos(ej, avance)
     tabla_gestion(ej)
     tabla_ranking(ej)
-    bloque_escuchas(escucha_clave, escucha_clave, f"ESCUCHAS · {nombre_grande}")
+    bloque_escuchas(escucha_clave, escucha_pdv, f"ESCUCHAS · {nombre_grande}")
     md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Tiendas / CTF · {h(nombre_grande)}</div>')
 
 

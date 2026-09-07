@@ -405,58 +405,176 @@ def cargar_fibra(path: Path | str) -> DatosFibra:
 
 
 # ---------------------------------------------------------------------------
-# ESCUCHAS ENTEL (opcional)
+# ESCUCHAS ENTEL  (export del Power BI "Adherencia KPIs Hogar por PDV - Ejecutivo")
 # ---------------------------------------------------------------------------
-ESCUCHAS_COLS = ["ejecutivo", "tienda", "auditadas", "starlink", "latam_pass", "hogar", "fibra_calidad",
-                 "fibra_estabilidad", "porta_motivo", "porta_objeciones", "porta_urgencia"]
-ESCUCHAS_ALIAS = {
-    "ejecutivo": ["EJECUTIVO", "USUARIO", "COD EJECUTIVO"],
-    "tienda": ["TIENDA", "PDV", "NOMBRE TIENDA"],
-    "auditadas": ["ESCUCHAS AUDITADAS", "AUDITADAS", "Q ESCUCHAS", "ESCUCHAS"],
-    "starlink": ["STARLINK"],
-    "latam_pass": ["LATAM PASS", "LATAM"],
-    "hogar": ["HOGAR"],
-    "fibra_calidad": ["FIBRA CALIDAD", "CALIDAD"],
-    "fibra_estabilidad": ["FIBRA ESTABILIDAD", "ESTABILIDAD"],
-    "porta_motivo": ["PORTA MOTIVO", "MOTIVO"],
-    "porta_objeciones": ["PORTA OBJECIONES", "OBJECIONES"],
-    "porta_urgencia": ["PORTA URGENCIA", "URGENCIA"],
+ESCUCHAS_COLS = ["clave", "pdv", "nivel", "auditadas", "starlink", "latam_pass", "hogar",
+                 "fibra_calidad", "fibra_estabilidad", "porta_motivo", "porta_objeciones", "porta_urgencia"]
+
+# columna del export -> clave interna (se comparan normalizadas)
+ESCUCHAS_MAPA = {
+    "KPI FOCO N AUDITADAS": "auditadas",
+    "STARLINK % TODAS": "starlink",
+    "LATAM PASS % TODAS": "latam_pass",
+    "MOTIVO HOGAR %": "hogar",
+    "FIBRA CALIDAD %": "fibra_calidad",
+    "FIBRA ESTABILIDAD %": "fibra_estabilidad",
+    "MOTIVO PORTABILIDAD %": "porta_motivo",
+    "PORTA OBJECIONES %": "porta_objeciones",
+    "PORTA URGENCIA %": "porta_urgencia",
 }
+
+
+def _pdv_desde_texto(txt: str) -> str:
+    """'5245 - Arauco Maipú' -> '5245'."""
+    m = re.match(r"\s*(\d{3,6})\s*-", _txt(txt))
+    return m.group(1) if m else ""
 
 
 def cargar_escuchas(path: Path | str) -> pd.DataFrame:
     """
-    Lee un Excel de escuchas. Busca en la primera hoja una fila de encabezados que
-    contenga 'EJECUTIVO' (o 'USUARIO') y toma las columnas por nombre (ver ESCUCHAS_ALIAS).
-    Devuelve un DataFrame con las columnas de ESCUCHAS_COLS; las filas cuyo ejecutivo
-    empieza por 'CANAL' o 'CTF' se interpretan como referencias del canal / de CTF.
+    Lee el Excel exportado desde Power BI (hoja 'Export' o la primera hoja).
+
+    Cada fila queda clasificada en 'nivel':
+      - "ejecutivo": agent_id = CMA_xxx
+      - "tienda":    agent_id = Total  (el PDV trae el código de la tienda)
+      - "ctf":       PDV = Total       (total de la franquicia)
+      - "canal":     si el export incluye una fila de canal
     """
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    ws = wb.worksheets[0]
+    ws = wb["Export"] if "Export" in wb.sheetnames else wb.worksheets[0]
     rows = list(ws.iter_rows(values_only=True))
     wb.close()
+
+    # fila de encabezados: la que contiene PDV / agent_id
     h_idx = None
-    for i, r in enumerate(rows[:30]):
-        normalizados = [_norm(v) for v in r]
-        if any(n in ("EJECUTIVO", "USUARIO", "COD EJECUTIVO") for n in normalizados):
+    for i, r in enumerate(rows[:25]):
+        norm = [_norm(v) for v in r]
+        if "PDV" in norm and any(n in ("AGENT_ID", "AGENTE", "EJECUTIVO") for n in norm):
             h_idx = i
             break
     if h_idx is None:
         return pd.DataFrame(columns=ESCUCHAS_COLS)
+
     header = [_norm(v) for v in rows[h_idx]]
-    pos = {}
-    for clave, alias in ESCUCHAS_ALIAS.items():
-        for a in alias:
-            if _norm(a) in header:
-                pos[clave] = header.index(_norm(a))
-                break
+    i_pdv = header.index("PDV")
+    i_ag = next((header.index(n) for n in ("AGENT_ID", "AGENTE", "EJECUTIVO") if n in header), None)
+    pos = {clave: header.index(_norm(col)) for col, clave in ESCUCHAS_MAPA.items() if _norm(col) in header}
+
     out = []
     for r in rows[h_idx + 1:]:
-        reg = {}
-        for clave in ESCUCHAS_COLS:
-            i = pos.get(clave)
-            v = r[i] if i is not None and i < len(r) else None
-            reg[clave] = _txt(v) if clave in ("ejecutivo", "tienda") else _num(v)
-        if reg["ejecutivo"]:
-            out.append(reg)
-    return pd.DataFrame(out, columns=ESCUCHAS_COLS)
+        pdv_txt = _txt(r[i_pdv]) if i_pdv < len(r) else ""
+        ag = _txt(r[i_ag]) if (i_ag is not None and i_ag < len(r)) else ""
+        if not pdv_txt or pdv_txt.upper().startswith("FILTROS APLICADOS"):
+            continue
+        reg = {clave: _num(r[i]) for clave, i in pos.items() if i < len(r)}
+        if ag.upper().startswith("CMA_"):
+            nivel, clave = "ejecutivo", ag.upper()
+        elif ag.upper() in ("TOTAL", "") and pdv_txt.upper() == "TOTAL":
+            nivel, clave = "ctf", "CTF"
+        elif ag.upper() == "CANAL" or pdv_txt.upper() == "CANAL":
+            nivel, clave = "canal", "CANAL"
+        elif ag.upper() == "TOTAL":
+            nivel, clave = "tienda", _pdv_desde_texto(pdv_txt)
+        else:
+            continue
+        reg.update({"clave": clave, "pdv": _pdv_desde_texto(pdv_txt), "nivel": nivel})
+        out.append(reg)
+
+    df = pd.DataFrame(out)
+    for c in ESCUCHAS_COLS:
+        if c not in df.columns:
+            df[c] = None
+    return df[ESCUCHAS_COLS]
+
+
+# ---------------------------------------------------------------------------
+# COLABORADORES  (hoja DOTACIÓN)
+# ---------------------------------------------------------------------------
+COLAB_COLS = ["ejecutivo", "nombre", "fecha_ingreso", "fecha_nacimiento", "jornada", "estatus"]
+
+# encabezado esperado -> clave interna
+COLAB_MAPA = {
+    "IDENTIDAD RED": "ejecutivo",
+    "NOMBRE COMPLETO": "nombre",
+    "FECHA INGRESO": "fecha_ingreso",
+    "FECHA NACIMIENTO": "fecha_nacimiento",
+    "JORNADA": "jornada",
+    "ESTADO ACTUAL": "estatus",
+}
+
+
+def cargar_colaboradores(path: Path | str) -> pd.DataFrame:
+    """
+    Lee la hoja DOTACIÓN y devuelve SOLO las columnas que el panel necesita.
+
+    El archivo original trae datos personales que el panel no usa (RUT, dirección,
+    teléfonos, contactos de emergencia, credenciales…). Esta función los descarta:
+    nunca salen de aquí ni se guardan en disco.
+    """
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    ws = wb["DOTACIÓN"] if "DOTACIÓN" in wb.sheetnames else wb.worksheets[0]
+    rows = list(ws.iter_rows(values_only=True))
+    wb.close()
+
+    # 1) formato reducido (el que guarda esta misma app): encabezados ya finales
+    for i, r in enumerate(rows[:5]):
+        header = [_norm(v) for v in r]
+        if "EJECUTIVO" in header and "FECHA INGRESO".replace(" ", "_") in [x.replace(" ", "_") for x in header] or \
+           ("EJECUTIVO" in header and "FECHA_INGRESO" in header):
+            pos = {c: header.index(_norm(c)) for c in COLAB_COLS if _norm(c) in header}
+            out = []
+            for rr in rows[i + 1:]:
+                cod = _txt(rr[pos["ejecutivo"]]).upper() if "ejecutivo" in pos and pos["ejecutivo"] < len(rr) else ""
+                if not cod.startswith("CMA_"):
+                    continue
+                out.append({
+                    "ejecutivo": cod,
+                    "nombre": _txt(rr[pos["nombre"]]) if "nombre" in pos else "",
+                    "fecha_ingreso": _fecha(rr[pos["fecha_ingreso"]]) if "fecha_ingreso" in pos else None,
+                    "fecha_nacimiento": _fecha(rr[pos["fecha_nacimiento"]]) if "fecha_nacimiento" in pos else None,
+                    "jornada": _txt(rr[pos["jornada"]]) if "jornada" in pos else "",
+                    "estatus": _txt(rr[pos["estatus"]]) if "estatus" in pos else "",
+                })
+            return pd.DataFrame(out, columns=COLAB_COLS).drop_duplicates(subset=["ejecutivo"], keep="first")
+
+    # 2) formato original de la planilla DOTACIÓN
+    h_idx = None
+    for i, r in enumerate(rows[:20]):
+        if any(_norm(v) == "IDENTIDAD RED" for v in r):
+            h_idx = i
+            break
+    if h_idx is None:
+        return pd.DataFrame(columns=COLAB_COLS)
+
+    header = [_norm(v) for v in rows[h_idx]]
+    pos = {clave: header.index(_norm(col)) for col, clave in COLAB_MAPA.items() if _norm(col) in header}
+
+    out = []
+    for r in rows[h_idx + 1:]:
+        i = pos.get("ejecutivo")
+        cod = _txt(r[i]).upper() if (i is not None and i < len(r)) else ""
+        if not cod.startswith("CMA_"):
+            continue
+        out.append({
+            "ejecutivo": cod,
+            "nombre": _txt(r[pos["nombre"]]) if "nombre" in pos else "",
+            "fecha_ingreso": _fecha(r[pos["fecha_ingreso"]]) if "fecha_ingreso" in pos else None,
+            "fecha_nacimiento": _fecha(r[pos["fecha_nacimiento"]]) if "fecha_nacimiento" in pos else None,
+            "jornada": _txt(r[pos["jornada"]]) if "jornada" in pos else "",
+            "estatus": _txt(r[pos["estatus"]]) if "estatus" in pos else "",
+        })
+    df = pd.DataFrame(out, columns=COLAB_COLS)
+    return df.drop_duplicates(subset=["ejecutivo"], keep="first")
+
+
+def guardar_colaboradores_reducido(origen_bytes: bytes, destino: Path) -> int:
+    """
+    Guarda en disco SOLO las columnas necesarias del archivo de dotación.
+
+    Recibe el archivo subido en memoria, extrae las columnas del panel y escribe
+    un Excel reducido. El archivo original nunca se guarda. Devuelve las filas.
+    """
+    import io
+    df = cargar_colaboradores(io.BytesIO(origen_bytes))
+    df.to_excel(destino, index=False, sheet_name="COLABORADORES")
+    return len(df)
