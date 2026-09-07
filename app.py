@@ -125,6 +125,15 @@ def avance_calendario(row) -> float:
     return v(row.get("dias_trab")) / dias_mes if dias_mes else 0.0
 
 
+def avance_dias(row) -> float:
+    """Avance del periodo según el propio Excel: días trabajados / (trabajados + restantes).
+
+    Es el criterio que usan las hojas de fibra y coincide con la celda B3 de MOV-FIBRA.
+    """
+    t, r = v(row.get("dias_trab")), v(row.get("dias_rest"))
+    return t / (t + r) if (t + r) else mov.avance_esperado
+
+
 def deben(row, clave_meta: str, avance: float) -> float:
     return v(row.get(clave_meta)) * avance
 
@@ -595,83 +604,296 @@ def vista_jefe():
 
 
 # ===========================================================================
-# VISTA 4 · FIBRA TIENDAS
+# VISTAS 4 y 5 · FIBRA
 # ===========================================================================
 def _sin_fibra():
     st.warning("Carga el Excel **FIBRA DRIVE** en *Gestión de archivos* para ver esta vista.")
 
 
+ESTATUS_ORDEN = ["AGENDADA", "EN INSTALACIÓN", "INSTALADA", "REPROGRAMADA", "RECONTRATADA", "CANCELADO"]
+
+
+def _sol_periodo(sol: pd.DataFrame) -> pd.DataFrame:
+    """Solicitudes del mes del corte (según la fecha de solicitud)."""
+    if sol is None or sol.empty:
+        return sol if sol is not None else pd.DataFrame()
+    mes = (fib.fecha_actualizacion or mov.fecha_corte)
+    return sol[sol["mes"] == mes.month] if mes else sol
+
+
+def bloque_ordenes(s: pd.DataFrame):
+    """5 tarjetas: total órdenes, instaladas, canceladas, en progreso, recontratadas."""
+    total = len(s)
+    def cuenta(*estatus):
+        return int(s["estatus"].isin(estatus).sum()) if total else 0
+    inst, canc, recon = cuenta("INSTALADA"), cuenta("CANCELADO"), cuenta("RECONTRATADA")
+    prog = cuenta("AGENDADA", "EN INSTALACIÓN", "REPROGRAMADA")
+    def p(x):
+        return pct(x / total, 1) if total else "0,0%"
+    c = st.columns(5)
+    datos = [("📋 Total órdenes", total, "100%", "t-cyan", "cyan"),
+             ("✅ Instaladas", inst, p(inst), "t-verde", "verde"),
+             ("❌ Canceladas", canc, p(canc), "t-rojo", "rojo"),
+             ("⏳ En progreso", prog, p(prog), "t-morado", "morado"),
+             ("🔁 Recontratadas", recon, p(recon), "t-cyan", "cyan")]
+    for col, (t, val, sub, cl, borde) in zip(c, datos):
+        with col:
+            ui.kpi(t, str(val), sub, cl, borde)
+
+
+def bloque_reagendamientos(s: pd.DataFrame):
+    reag = int((s["reagendamientos"] > 0).sum()) if not s.empty else 0
+    total_reag = int(s["reagendamientos"].sum()) if not s.empty else 0
+    prom = s["intentos"].mean() if not s.empty else 0
+    mx = int(s["intentos"].max()) if not s.empty else 0
+    c = st.columns(4)
+    for col, (t, val, sub) in zip(c, [("📄 Órdenes reagendadas", str(reag), "Con más de 1 intento"),
+                                      ("🔁 Reagendamientos", str(total_reag), "Intentos adicionales"),
+                                      ("📊 Prom. intentos", f"{prom:.2f}".replace(".", ","), "Por orden"),
+                                      ("⚠️ Máx. intentos", str(mx), "Máximo observado")]):
+        with col:
+            ui.kpi(t, val, sub, "t-cyan", "")
+
+
+def bloque_cancelaciones(s: pd.DataFrame, con_tienda: bool = True):
+    ui.seccion("❌", "ANÁLISIS DE CANCELACIONES")
+    canc = s[s["estatus"] == "CANCELADO"] if not s.empty else pd.DataFrame()
+    if canc.empty:
+        st.info("Sin cancelaciones registradas en el periodo.")
+        return
+    a, b = st.columns(2)
+    with a:
+        st.caption("Principales motivos de cancelación")
+        st.bar_chart(canc["motivo"].fillna("Sin motivo").replace("", "Sin motivo").value_counts().head(8), color="#0ea5e9")
+    with b:
+        st.caption("Tipo de rechazo")
+        st.bar_chart(canc["tipo_rechazo"].fillna("Sin tipificación").replace("", "Sin tipificación").value_counts().head(8), color="#0ea5e9")
+    cols = ["id", "ejecutivo"] + (["pdv"] if con_tienda else []) + ["tipo_rechazo", "motivo"]
+    vis = canc[cols].copy()
+    if con_tienda:
+        vis["pdv"] = vis["pdv"].map(lambda p: nombre_tienda.get(p, p))
+    vis.columns = ["ID", "Nombre ejecutivo"] + (["Tienda"] if con_tienda else []) + ["Tipo de rechazo", "Motivo"]
+    st.dataframe(vis.fillna("").astype(str).replace({"None": "", "NaT": "", "nan": ""}), use_container_width=True, hide_index=True)
+
+
 def vista_fibra_tiendas():
     if fib is None:
         return _sin_fibra()
-    res, sol = fib.resumen, fib.solicitudes
-    md(f'<div class="card cyan" style="padding:.6rem 1rem">📡 <b>FIBRA DRIVE</b> · última solicitud registrada: <b>{fecha_txt(fib.fecha_actualizacion)}</b></div>')
+    md('<div class="card cyan" style="padding:.6rem 1rem;text-align:center"><span class="sec t-cyan">📡 FIBRA TIENDAS</span></div>')
+    res, sol = fib.resumen, _sol_periodo(fib.solicitudes)
 
-    tiendas_res = res[~res["es_ejecutivo"]].copy()
-    tiendas_res = tiendas_res[tiendas_res["pdv"].isin(nombre_tienda.keys()) | tiendas_res["nombre"].str.contains("CTF", na=False)]
-    tiendas_res = tiendas_res[(tiendas_res["meta_fibra"].fillna(0) > 0) | (tiendas_res["sol_ok"].fillna(0) > 0)]
-    tiendas_res = tiendas_res.drop_duplicates(subset=["pdv"], keep="first")
+    opciones = ["CTF"] + list(etiqueta_tienda.keys())
+    etiquetas = {"CTF": "CTF EMPRESA TOTAL", **{p: nombre_tienda[p] for p in etiqueta_tienda}}
+    sel = st.selectbox("🏬 Tienda / empresa", opciones, format_func=lambda p: etiquetas[p])
+    s = sol if sel == "CTF" else sol[sol["pdv"] == sel]
+    ej_res = res[res["es_ejecutivo"]] if sel == "CTF" else res[(res["es_ejecutivo"]) & (res["pdv"] == sel)]
+    ej_mov = ejecutivos if sel == "CTF" else ejecutivos[ejecutivos["pdv"] == sel]
+
+    md(f'<div class="card" style="padding:.6rem 1rem">Vista seleccionada: <b>{h(etiquetas[sel])}</b> · Órdenes: <b>{len(s)}</b></div>')
+    bloque_ordenes(s)
+
+    # --- fila de metas de fibra --------------------------------------------
+    meta = ej_res["meta_fibra"].fillna(0).sum()
+    real = ej_res["real_fibra"].fillna(0).sum()
+    cump = real / meta if meta else 0.0
+    fila_ref = pd.Series(mov.total) if sel == "CTF" else tiendas[tiendas["pdv"] == sel].iloc[0]
+    avance = avance_dias(fila_ref)
+    proy = cump / avance if avance else 0.0
+    deben_ = ej_mov["fib_deben"].fillna(0).sum()
+    inst = int((s["estatus"] == "INSTALADA").sum()) if not s.empty else 0
+    tasa = inst / len(s) if len(s) else 0.0
+    c = st.columns(7)
+    datos = [("🎯 Meta fibra", entero(meta), "Meta instalación", "t-cyan"),
+             ("✅ Real fibra", entero(real), "Instaladas válidas", "t-verde"),
+             ("📉 Faltan", entero(meta - real), "Para alcanzar meta", "t-rojo"),
+             ("📊 Cumplimiento", pct(cump, 1), "Real / meta", ui.color_cump(cump / max(avance, 1e-9))),
+             ("🚀 Proyección", pct(proy, 1), "Proyección de cierre", ui.color_cump(proy)),
+             ("🕐 Deben llevar", str(M.ceil_pos(deben_)), "Instaladas al corte", "t-cyan"),
+             ("🔧 Tasa instalación", pct(tasa, 1), "Instaladas / órdenes", ui.color_cump(tasa))]
+    for col, (t, val, sub, cl) in zip(c, datos):
+        with col:
+            ui.kpi(t, val, sub, cl, "")
+
+    # --- tabla cumplimiento fibra por ejecutivo -----------------------------
+    ui.seccion("👥", "CUMPLIMIENTO FIBRA POR EJECUTIVO")
     filas = []
-    for _, r in tiendas_res.iterrows():
-        nombre = nombre_tienda.get(r["pdv"], r["nombre"])
-        filas.append([h(nombre), entero(r.get("meta_sol")), entero(r.get("sol_ok")), entero(r.get("rechazo")),
-                      entero(r.get("meta_fibra")), entero(r.get("real_fibra")), f'<span class="{ui.color_cump(v(r.get("cump")) / max(mov.avance_esperado, 1e-9))}">{pct(r.get("cump"))}</span>',
-                      entero(r.get("meta_tv")), entero(r.get("real_tv")), pct(r.get("att_tv"), 1)])
-    ui.seccion("🏬", "RESUMEN FIBRA POR TIENDA", "hoja RESUMEN")
-    ui.card(ui.tabla(["Tienda", "Meta solic.", "Solic. OK", "Rechazos", "Meta fibra", "Real fibra", "% Cump.", "Meta TV", "Real TV", "Att TV"], filas), "cyan")
+    for _, r in ej_res.iterrows():
+        cod = r["nombre"]
+        m_, rn, ra = v(r.get("meta_fibra")), v(r.get("real_no_af")), v(r.get("real_af"))
+        tot = rn + ra
+        cu = tot / m_ if m_ else 0.0
+        pr = cu / avance if avance else 0.0
+        mv = ej_mov[ej_mov["ejecutivo"] == cod]
+        de = M.ceil_pos(v(mv.iloc[0]["fib_deben"]) if not mv.empty else m_ * avance)
+        ti = v(mv.iloc[0]["tasa_inst"]) if not mv.empty else 0.0
+        va = v(mv.iloc[0]["pct_valid"]) if not mv.empty else 0.0
+        sem_c = "sem-v" if cu >= avance else ("sem-a" if cu >= avance * 0.7 else "sem-r")
+        sem_p = "sem-v" if pr >= 1 else ("sem-a" if pr >= 0.8 else "sem-r")
+        filas.append([h(cod), h(nombre_tienda.get(r["pdv"], r["pdv"])), entero(m_), entero(rn), entero(ra), entero(tot),
+                      f'<span class="celda-sem {sem_c}">{pct(cu, 0)}</span>', f'<span class="celda-sem {sem_p}">{pct(pr, 0)}</span>',
+                      str(de), entero(r.get("FIBRA PEND. SEPT")), entero(r.get("PEND. OCT")),
+                      f'<span class="celda-sem {"sem-v" if ti >= 0.75 else ("sem-a" if ti >= 0.4 else "sem-r")}">{pct(ti, 1)}</span>',
+                      f'<span class="celda-sem {"sem-v" if va >= 0.85 else ("sem-a" if va >= 0.7 else "sem-r")}">{pct(va, 1)}</span>'])
+    ui.card(ui.tabla(["Ejecutivo", "Tienda", "Meta", "Real", "Afinidad", "Total", "Cump.", "Proy.", "Deben",
+                      "Pend. sept.", "Pend. oct.", "Tasa inst.", "Valid."], filas, izq=2), "cyan")
 
-    if not sol.empty:
-        ui.seccion("📋", "ESTADO DE LAS SOLICITUDES", "hoja AVANCE FIBRAS")
-        mes = mov.fecha_corte.month if mov.fecha_corte else None
-        sol_mes = sol[sol["mes"] == mes] if mes else sol
-        piv = sol_mes.pivot_table(index="pdv", columns="estatus", values="ejecutivo", aggfunc="count", fill_value=0)
-        piv = piv.reindex([p for p in nombre_tienda if p in piv.index])
-        estatus_cols = list(piv.columns)
-        filas = [[h(nombre_tienda.get(p, p))] + [entero(piv.loc[p, c]) for c in estatus_cols] + [entero(piv.loc[p].sum())] for p in piv.index]
-        total = ["TOTAL"] + [entero(piv[c].sum()) for c in estatus_cols] + [entero(piv.values.sum())]
-        ui.card(ui.tabla(["Tienda"] + [c.title() for c in estatus_cols] + ["Total"], filas, total), "cyan")
+    # --- evolutivo diario ----------------------------------------------------
+    ui.seccion("📅", "EVOLUTIVO DIARIO DE SOLICITUDES")
+    ref = fib.fecha_actualizacion or mov.fecha_corte
+    if not s.empty and ref:
+        dias = [dt.date(ref.year, ref.month, d) for d in range(1, ref.day + 1)]
+        filas = []
+        for cod in sorted(s["ejecutivo"].unique()):
+            ss = s[s["ejecutivo"] == cod]
+            fechas = [f_ for f_ in ss["fecha_solicitud"] if isinstance(f_, dt.date) and pd.notna(f_)]
+            ultima = max(fechas) if fechas else None
+            sin = max(0, (ref - ultima).days) if ultima else None
+            por_dia = [int((ss["fecha_solicitud"] == d).sum()) for d in dias]
+            celdas = [f'<span class="celda-sem {"sem-v" if n >= 3 else ("sem-a" if n >= 1 else "")}">{n or ""}</span>' for n in por_dia]
+            filas.append([h(ss.iloc[0]["pdv"]), h(cod), fecha_txt(ultima), str(sin) if sin is not None else "—", str(sum(por_dia))] + celdas)
+        ui.card(ui.tabla(["PDV", "Ejecutivo", "Última solicitud", "Días sin solicitud", "Total"] + [d.strftime("%d/%m") for d in dias], filas, izq=2), "cyan")
 
-        ui.seccion("📈", "SOLICITUDES POR DÍA", f"mes {mes or ''}")
-        por_dia = sol_mes.dropna(subset=["fecha_solicitud"]).groupby("fecha_solicitud").size()
-        if not por_dia.empty:
-            por_dia.index = [f_.strftime("%d/%m") for f_ in por_dia.index]
-            st.bar_chart(por_dia.rename("solicitudes"), color="#22d3ee")
-    md('<div class="foot">Vista: Fibra tiendas</div>')
+    bloque_reagendamientos(s)
+
+    # --- agenda y estado de instalaciones ------------------------------------
+    ui.seccion("📆", "AGENDA Y ESTADO DE INSTALACIONES")
+    st.caption(f"Tienda seleccionada: {etiquetas[sel]}. Filtra el periodo para revisar qué se instalará y el estado actual de cada solicitud.")
+    f1, f2 = st.columns([1, 2])
+    with f1:
+        campo = st.selectbox("📅 Filtrar según", ["Fecha de instalación", "Fecha de solicitud"], key="fibra_campo")
+    col_f = "fecha_instalacion" if campo.startswith("Fecha de inst") else "fecha_solicitud"
+    fechas_validas = [f_ for f_ in s[col_f] if isinstance(f_, dt.date) and pd.notna(f_)] if not s.empty else []
+    with f2:
+        if fechas_validas:
+            rango = st.date_input("📆 Rango de fechas", value=(min(fechas_validas), max(fechas_validas)), key="fibra_rango")
+        else:
+            rango = None
+    estados = st.multiselect("📌 Estado de las solicitudes", ESTATUS_ORDEN,
+                             default=[e for e in ESTATUS_ORDEN if e in set(s["estatus"].dropna())], key="fibra_estados")
+    ss = s[s["estatus"].isin(estados)] if not s.empty else s
+    if rango and isinstance(rango, tuple) and len(rango) == 2 and not ss.empty:
+        ss = ss[ss[col_f].map(lambda f_: isinstance(f_, dt.date) and pd.notna(f_) and rango[0] <= f_ <= rango[1])]
+
+    n_sol = len(ss)
+    n_inst = int((ss["estatus"] == "INSTALADA").sum()) if n_sol else 0
+    n_canc = int((ss["estatus"] == "CANCELADO").sum()) if n_sol else 0
+    n_reag = int((ss["reagendamientos"] > 0).sum()) if n_sol else 0
+    c = st.columns(5)
+    for col, (t, val, sub, cl, b) in zip(c, [("📋 Solicitudes", n_sol, "En el periodo", "t-cyan", "cyan"),
+                                             ("📦 Por instalar", n_sol - n_inst - n_canc, "Pendientes / en curso", "t-amarillo", "amarillo"),
+                                             ("✅ Instaladas", n_inst, "Completadas", "t-verde", "verde"),
+                                             ("❌ Canceladas", n_canc, "No se instalarán", "t-rojo", "rojo"),
+                                             ("🔁 Reagendadas", n_reag, "Con más de un intento", "t-morado", "morado")]):
+        with col:
+            ui.kpi(t, str(val), sub, cl, b)
+
+    if not ss.empty:
+        g1, g2 = st.columns(2)
+        with g1:
+            st.caption("Carga de instalaciones por día")
+            por_dia = ss.dropna(subset=[col_f]).groupby(col_f).size()
+            if not por_dia.empty:
+                por_dia.index = [f_.strftime("%d/%m") for f_ in por_dia.index]
+                st.bar_chart(por_dia.rename("órdenes"), color="#22d3ee")
+        with g2:
+            st.caption("Distribución por estado")
+            st.bar_chart(ss["estatus"].value_counts(), color="#0ea5e9")
+
+        st.caption("Detalle de solicitudes")
+        cols = ["id", "pdv", "ejecutivo", "fecha_solicitud", "fecha_instalacion", "estado", "estatus",
+                "intentos", "reagendamientos", "contratista", "comuna", "motivo"]
+        vis = ss[[c_ for c_ in cols if c_ in ss.columns]].copy()
+        vis["pdv"] = vis["pdv"].map(lambda p: nombre_tienda.get(p, p))
+        vis.columns = ["ID", "Tienda", "Nombre ejecutivo", "Fecha solicitud", "Fecha instalación", "Estado", "Estatus",
+                       "Intentos", "Reagendamientos", "Contratista", "Comuna", "Motivo"][:len(vis.columns)]
+        vis = vis.fillna("").astype(str).replace({"None": "", "NaT": "", "nan": ""})
+        st.dataframe(vis, use_container_width=True, hide_index=True)
+        st.download_button("📥 Descargar agenda filtrada (CSV)", vis.to_csv(index=False).encode("utf-8-sig"),
+                           file_name=f"agenda_fibra_{fecha_txt(mov.fecha_corte).replace('/', '-')}.csv", mime="text/csv")
+
+    bloque_cancelaciones(s)
+
+    # --- comparativo de tiendas ---------------------------------------------
+    ui.seccion("🏬", "COMPARATIVO DE TIENDAS")
+    filas = []
+    for pdv_, nom in nombre_tienda.items():
+        sp = sol[sol["pdv"] == pdv_] if not sol.empty else pd.DataFrame()
+        er = res[(res["es_ejecutivo"]) & (res["pdv"] == pdv_)]
+        m_, r_ = er["meta_fibra"].fillna(0).sum(), er["real_fibra"].fillna(0).sum()
+        cu = r_ / m_ if m_ else 0.0
+        i_ = int((sp["estatus"] == "INSTALADA").sum()) if len(sp) else 0
+        filas.append([h(nom), str(len(sp)), str(i_), str(int((sp["estatus"] == "CANCELADO").sum()) if len(sp) else 0),
+                      str(int(sp["estatus"].isin(["AGENDADA", "EN INSTALACIÓN", "REPROGRAMADA"]).sum()) if len(sp) else 0),
+                      str(int((sp["estatus"] == "RECONTRATADA").sum()) if len(sp) else 0), entero(m_), entero(r_),
+                      f'<span class="{ui.color_cump(cu / max(avance, 1e-9))}">{pct(cu, 1)}</span>',
+                      f'<span class="{ui.color_cump(i_ / len(sp) if len(sp) else 0)}">{pct(i_ / len(sp) if len(sp) else 0, 1)}</span>'])
+    ui.card(ui.tabla(["Tienda", "Órdenes", "Instaladas", "Canceladas", "En progreso", "Recontratadas", "Meta", "Real", "Cumplimiento", "Tasa instalación"], filas), "cyan")
+    md(f'<div class="foot">Excel Fibra activo: {h(fib.archivo)} · Vista: 📡 FIBRA TIENDAS</div>')
 
 
-# ===========================================================================
-# VISTA 5 · FIBRA EJECUTIVOS
-# ===========================================================================
 def vista_fibra_ejecutivos():
     if fib is None:
         return _sin_fibra()
-    res, sol = fib.resumen, fib.solicitudes
-    pdv = st.selectbox("🏬 Tienda", list(etiqueta_tienda.keys()), format_func=lambda p: etiqueta_tienda[p])
-    ej_res = res[(res["es_ejecutivo"]) & (res["pdv"] == pdv)]
-    ui.seccion("👷", f"FIBRA POR EJECUTIVO · {nombre_tienda.get(pdv, pdv)}", "hoja RESUMEN")
-    filas = []
-    for _, r in ej_res.iterrows():
-        rf = M.resumen_fibra_ejecutivo(sol, r["nombre"], mov.fecha_corte)
-        filas.append([h(r["nombre"]), entero(r.get("sol_ok")), entero(r.get("rechazo")), entero(r.get("meta_fibra")),
-                      entero(r.get("real_fibra")), f'<span class="{ui.color_cump(v(r.get("cump")) / max(mov.avance_esperado, 1e-9))}">{pct(r.get("cump"))}</span>',
-                      entero(r.get("meta_tv")), entero(r.get("real_tv")), pct(r.get("att_tv"), 1),
-                      fecha_txt(rf["ultima"]), str(rf["periodo"])])
-    ui.card(ui.tabla(["Ejecutivo", "Solic. OK", "Rechazos", "Meta fibra", "Real fibra", "% Cump.", "Meta TV", "Real TV", "Att TV", "Última solicitud", "Solic. periodo"], filas), "cyan")
+    md('<div class="card cyan" style="padding:.6rem 1rem;text-align:center"><span class="sec t-cyan">👷 FIBRA EJECUTIVOS</span></div>')
+    res, sol = fib.resumen, _sol_periodo(fib.solicitudes)
 
-    codigo = st.selectbox("👤 Ejecutivo", list(ej_res["nombre"]) if not ej_res.empty else [])
-    if codigo and not sol.empty:
-        s = sol[sol["ejecutivo"] == codigo].copy()
-        conteo = s["estatus"].fillna("(sin estatus)").value_counts()
-        cols = st.columns(max(1, min(6, len(conteo))))
-        for i, (k, n) in enumerate(conteo.items()):
-            with cols[i % len(cols)]:
-                ui.kpi(str(k), str(int(n)), "", "t-cyan", "cyan")
-        ui.seccion("📋", "DETALLE DE SOLICITUDES", codigo)
-        vis = s[["fecha_solicitud", "fecha_instalacion", "estado", "estatus", "incluye_tv", "tipo_rechazo", "motivo"]].sort_values("fecha_solicitud", ascending=False)
-        vis.columns = ["Fecha solicitud", "Fecha instalación", "Estado", "Estatus", "TV", "Tipo rechazo", "Motivo"]
-        vis = vis.fillna("").astype(str).replace({"None": "", "NaT": ""})
-        st.dataframe(vis, use_container_width=True, hide_index=True)
-    md('<div class="foot">Vista: Fibra ejecutivos</div>')
+    s1, s2 = st.columns(2)
+    with s1:
+        pdv = st.selectbox("🏬 Tienda", list(etiqueta_tienda.keys()), format_func=lambda p: etiqueta_tienda[p])
+    ej_tienda = ejecutivos[ejecutivos["pdv"] == pdv]
+    if ej_tienda.empty:
+        st.warning("Esta tienda no tiene ejecutivos activos.")
+        return
+    with s2:
+        codigo = st.selectbox("👤 Ejecutivo", list(ej_tienda["ejecutivo"]))
+    e = ej_tienda[ej_tienda["ejecutivo"] == codigo].iloc[0]
+    r = res[(res["es_ejecutivo"]) & (res["nombre"] == codigo)]
+    r = r.iloc[0] if not r.empty else pd.Series(dtype=object)
+    s = sol[sol["ejecutivo"] == codigo] if not sol.empty else pd.DataFrame()
+    avance = avance_dias(e)
+
+    md(f'<div class="card" style="padding:.6rem 1rem"><b>{h(codigo)}</b> · {h(mov.nombres.get(codigo, ""))} · {h(nombre_tienda.get(pdv, ""))}</div>')
+
+    meta, real = v(r.get("meta_fibra")) or v(e.get("fib_meta")), v(r.get("real_fibra"))
+    cump = real / meta if meta else 0.0
+    proy = cump / avance if avance else 0.0
+    c = st.columns(6)
+    datos = [("🎯 Meta", entero(meta), "Meta fibra", "t-cyan"),
+             ("✅ Lleva", entero(real), "Instaladas válidas", "t-verde"),
+             ("📉 Faltan", entero(meta - real), "Para llegar a meta", "t-rojo"),
+             ("🕐 Debe llevar", str(M.ceil_pos(e.get("fib_deben"))), "Según el corte", "t-cyan"),
+             ("📊 Cumpl.", pct(cump, 1), "Real / meta", ui.color_cump(cump / max(avance, 1e-9))),
+             ("🚀 Proyección", pct(proy, 1), "Cierre proyectado", ui.color_cump(proy))]
+    for col, (t, val, sub, cl) in zip(c, datos):
+        with col:
+            ui.kpi(t, val, sub, cl, "")
+
+    bloque_ordenes(s)
+    bloque_reagendamientos(s)
+
+    ui.seccion("📌", "SEGUIMIENTO OPERATIVO")
+    c = st.columns(5)
+    for col, (t, val, sub) in zip(c, [("📋 Solicitudes", entero(r.get("sol_ok")), "Órdenes del ejecutivo"),
+                                      ("🟡 Pendientes", entero(r.get("FIBRA PEND. SEPT")), "Pendientes del mes"),
+                                      ("🔁 Recontratadas", entero(r.get("recont")), "Resumen"),
+                                      ("❌ Rechazos", entero(r.get("rechazo")), "Resumen"),
+                                      ("📅 Pend. próx.", entero(r.get("PEND. OCT")), "Próximo mes")]):
+        with col:
+            ui.kpi(t, val, sub, "t-cyan", "")
+
+    bloque_cancelaciones(s, con_tienda=False)
+
+    ui.seccion("📋", "DETALLE DE ÓRDENES")
+    if s.empty:
+        st.info("Este ejecutivo no tiene órdenes registradas en el periodo.")
+    else:
+        cols = ["id", "fecha_solicitud", "fecha_instalacion", "estado", "estatus", "tipo_rechazo", "motivo",
+                "intentos", "reagendamientos", "contratista", "comuna"]
+        vis = s[[c_ for c_ in cols if c_ in s.columns]].copy()
+        vis.columns = ["ID", "Fecha de solicitud", "Fecha de instalación", "Estado", "Estatus", "Tipo de rechazo",
+                       "Motivo", "Intentos", "Reagendamientos", "Contratista", "Comuna"][:len(vis.columns)]
+        st.dataframe(vis.fillna("").astype(str).replace({"None": "", "NaT": "", "nan": ""}), use_container_width=True, hide_index=True)
+    md(f'<div class="foot">Excel Fibra activo: {h(fib.archivo)} · Vista: 👷 FIBRA EJECUTIVOS</div>')
 
 
 # ===========================================================================

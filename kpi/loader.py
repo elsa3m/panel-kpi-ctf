@@ -359,8 +359,19 @@ def cargar_fibra(path: Path | str) -> DatosFibra:
         sol["pdv"] = sol["pdv"].map(_pdv)
         sol["ejecutivo"] = sol["ejecutivo"].map(_txt)
         sol = sol[sol["ejecutivo"] != ""]
-        # quitamos columnas con datos personales que el panel no usa
-        sol = sol.drop(columns=[c for c in ("RUT", "ID") if c in sol.columns])
+        # el RUT del cliente no se usa en el panel: se descarta al cargar
+        sol = sol.drop(columns=[c for c in ("RUT",) if c in sol.columns])
+        sol = sol.rename(columns={"ID": "id"})
+        # intentos de agendamiento = fechas informadas (1RA / 2DA / 3DA)
+        cols_fecha = [c for c in ("1RA FECHA", "2DA FECHA", "3DA FECHA") if c in sol.columns]
+        if cols_fecha:
+            sol["intentos"] = sol[cols_fecha].notna().sum(axis=1).clip(lower=1)
+        else:
+            sol["intentos"] = 1
+        sol["reagendamientos"] = (sol["intentos"] - 1).clip(lower=0)
+        sol["contratista"] = sol["CONTRATISTA PRODUCCION ENTEL"].map(_txt) if "CONTRATISTA PRODUCCION ENTEL" in sol.columns else ""
+        sol["comuna"] = sol["COMUNA INGRESOS ENTEL"].map(_txt) if "COMUNA INGRESOS ENTEL" in sol.columns else ""
+        sol["afinidad"] = sol["AFINIDAD"].map(_txt) if "AFINIDAD" in sol.columns else ""
 
     res = _df_desde_hoja(wb["RESUMEN"], 2) if "RESUMEN" in wb.sheetnames else pd.DataFrame()
     if not res.empty:
