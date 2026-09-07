@@ -28,7 +28,8 @@ def v(x, default=0.0):
 def pct(x, dec=2, default="—"):
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return default
-    return f"{x * 100:.{dec}f}%".replace(".", ",") if dec == 1 else f"{x * 100:.{dec}f}%"
+    # formato chileno: coma decimal en todo el panel
+    return f"{x * 100:.{dec}f}%".replace(".", ",")
 
 
 def pesos(x, default="$0"):
@@ -281,3 +282,84 @@ def proyeccion(real, avance_esperado: float):
     if not avance_esperado:
         return None
     return v(real) / avance_esperado
+
+
+def confianza_proyeccion(dias_trab) -> dict:
+    """
+    Qué tan confiable es una proyección lineal con los días trabajados que hay.
+
+    Con muy pocos días, dividir por el avance multiplica el ruido: un ejecutivo
+    con 2 días y una buena venta proyecta 400 %. Esto lo dice explícitamente en
+    vez de mostrar el número como si fuera un pronóstico.
+    """
+    d = int(v(dias_trab))
+    if d <= 0:
+        return {"nivel": "sin dato", "icono": "○", "clase": "t-gris", "dias": d,
+                "texto": "Sin días trabajados: no hay proyección posible."}
+    if d < cfg.DIAS_MIN_PROYECCION:
+        return {"nivel": "baja", "icono": "◔", "clase": "t-amarillo", "dias": d,
+                "texto": f"Proyección referencial: solo {d} día(s) trabajado(s) "
+                         f"(se vuelve confiable desde {cfg.DIAS_MIN_PROYECCION})."}
+    if d < 10:
+        return {"nivel": "media", "icono": "◑", "clase": "t-amarillo", "dias": d,
+                "texto": f"Proyección con {d} días trabajados: úsala como tendencia, no como cierre."}
+    return {"nivel": "alta", "icono": "●", "clase": "t-verde", "dias": d,
+            "texto": f"Proyección respaldada por {d} días trabajados."}
+
+
+def pct_topado(x, tope: float, dec: int = 1, default: str = "—") -> str:
+    """Formato de porcentaje con tope visual: sobre el tope muestra '> 150 %'."""
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return default
+    if x > tope:
+        return f"> {pct(tope, 0)}"
+    return pct(x, dec)
+
+
+def sanear_tasa(x):
+    """
+    Devuelve (valor, aviso). Una tasa de instalación de 300 % o un factor de
+    producción de 3.400 % no son un logro: son un dato mal calculado en el Excel.
+    """
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return None, ""
+    val = float(x)
+    if val > cfg.TOPE_TASA_VISUAL * 1.05:
+        return val, "Revisar en el Excel: el valor supera el 100 %."
+    if val < 0:
+        return val, "Revisar en el Excel: el valor es negativo."
+    return val, ""
+
+
+# ---------------------------------------------------------------------------
+# resumen accionable (para enviar por correo / WhatsApp)
+# ---------------------------------------------------------------------------
+def resumen_accionable(row, nombre: str, tienda: str, fecha_corte, f: dict,
+                       estandares: dict, avance_esperado: float) -> str:
+    """Texto plano listo para copiar y enviar al ejecutivo o al jefe de tienda."""
+    lista = alertas(row, estandares, avance_esperado)
+    prios = prioridades(lista, 3)
+    cab = f"PANEL KPI CTF · corte {fecha_txt(fecha_corte)}"
+    quien = f"{row.get('ejecutivo', '')} · {nombre}".strip(" ·")
+    lineas = [cab, "=" * len(cab), "",
+              f"Ejecutivo: {quien}", f"Tienda: {tienda}",
+              f"% Real a la fecha: {pct(f['cump'])} (tramo {f['tramo']} · {f['etiqueta']})",
+              f"% Proyección: {pct_topado(f['proy'], cfg.TOPE_PROYECCION_VISUAL)}",
+              f"Atenciones: {entero(row.get('atenciones'))} · Días restantes: {entero(row.get('dias_rest'))}",
+              "", f"QUÉ TRABAJAR PRIMERO ({len(lista)} alertas):"]
+    if prios:
+        for i, p in enumerate(prios, 1):
+            lineas.append(f"  {i}. [{p['foco']}] {p['texto']}")
+    else:
+        lineas.append("  Sin alertas: todos los KPI están sobre el corte y el estándar.")
+    lineas += ["", "PARA CERRAR EL MES:"]
+    for etiqueta, real, meta in [("Total móvil", row.get("mov_real"), row.get("mov_meta")),
+                                 ("Suscripción", row.get("sus_real"), row.get("sus_meta")),
+                                 ("Portabilidad", row.get("porta_real"), row.get("porta_meta")),
+                                 ("Fibra", row.get("fib_real"), row.get("fib_meta")),
+                                 ("Seguros", row.get("seg_real"), row.get("seg_meta"))]:
+        falta = max(0, ceil_pos(v(meta) - v(real)))
+        estado = "cumplida" if falta == 0 else f"faltan {falta}"
+        lineas.append(f"  · {etiqueta}: {entero(real)} de {entero(meta)} ({estado})")
+    lineas += ["", "Generado automáticamente desde el Panel KPI CTF."]
+    return "\n".join(lineas)

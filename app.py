@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from kpi import config as cfg
-from kpi import loader, metrics as M, ui
+from kpi import historia, loader, metrics as M, ui
 from kpi.metrics import entero, fecha_txt, pct, pesos, v
 from kpi.ui import celda, grid, h, md, mini
 
@@ -70,12 +70,11 @@ with c2:
 VISTAS = ["👤 Vista Ejecutivo", "🏬 Vista Tiendas / CTF", "👔 Jefe de Tienda", "📡 Fibra Tiendas", "👷 Fibra Ejecutivos"]
 vista = st.radio("Vista", VISTAS, horizontal=True, label_visibility="collapsed")
 
-st.info("Los Excel activos quedan guardados en el servidor. Mantén también una **copia de respaldo externa**.")
-
 # ---------------------------------------------------------------------------
 # gestión de archivos
 # ---------------------------------------------------------------------------
 with st.expander("📁 GESTIÓN DE ARCHIVOS", expanded=False):
+    st.caption("Los Excel activos quedan guardados en el servidor. Mantén también una copia de respaldo externa.")
     st.caption("Puedes cargar un archivo nuevo para reemplazar el anterior, o eliminarlo manualmente con el botón correspondiente.")
     for nombre, meta in cfg.FUENTES.items():
         st.subheader(f"{meta['icono']} {meta['titulo']}")
@@ -110,6 +109,25 @@ with st.expander("📁 GESTIÓN DE ARCHIVOS", expanded=False):
         else:
             st.warning(f"Sin archivo {meta['titulo']} cargado.")
 
+    # --- histórico de cortes -------------------------------------------------
+    st.subheader("🕘 HISTÓRICO DE CORTES")
+    st.caption("Cada Excel que cargas queda registrado como un corte. Con dos o más cortes el panel "
+               "muestra la tendencia y la variación. **Descarga el histórico de vez en cuando**: si el "
+               "servidor reinicia la app, se pierde y lo puedes volver a cargar aquí.")
+    st.markdown(f"**{historia.resumen()}**")
+    hc1, hc2 = st.columns(2)
+    with hc1:
+        st.download_button("📥 Descargar histórico (CSV)", historia.exportar_csv(),
+                           file_name="historico_kpi_ctf.csv", mime="text/csv", key="dl_hist")
+    with hc2:
+        hist_up = st.file_uploader("Restaurar histórico guardado", type=["csv"], key="up_hist")
+        if hist_up is not None:
+            try:
+                n = historia.importar_csv(hist_up.getvalue())
+                st.success(f"Histórico restaurado: {n} filas.")
+            except Exception as ex:  # noqa: BLE001
+                st.error(f"No se pudo leer el histórico: {ex}")
+
 mov = cargar("MOV-FIBRA")
 fib = cargar("FIBRA DRIVE")
 esc = cargar("ESCUCHAS ENTEL")
@@ -122,6 +140,27 @@ if mov is None:
 
 for aviso in mov.avisos:
     st.warning(aviso)
+
+# el corte cargado se registra en el histórico (si ya estaba, se reemplaza)
+try:
+    historia.guardar_corte(mov)
+except Exception:  # noqa: BLE001  el histórico nunca debe romper el panel
+    pass
+
+
+def tendencia(clave: str, kpi: str, en_puntos: bool = True, invertir: bool = False) -> str:
+    """Chip de variación + mini-gráfico de los últimos cortes, si los hay."""
+    var = historia.variacion(clave, kpi)
+    if var is None:
+        return ""
+    factor = 100 if en_puntos else 1
+    sufijo = " pts" if en_puntos else ""
+    chip = ui.delta(var["delta"] * factor, sufijo, invertir=invertir)
+    s = historia.serie(clave, kpi, n=12)
+    spark = ui.sparkline(list(s.values)) if len(s) > 2 else ""
+    desde = var["fecha_anterior"]
+    desde = desde.strftime("%d/%m") if hasattr(desde, "strftime") else str(desde)
+    return f'<div class="ref">{chip} <span class="t-gris">vs. {desde}</span></div>{spark}'
 
 _f1, _slot_pdf = st.columns([2.7, 1])
 with _f1:
@@ -159,13 +198,14 @@ def deben(row, clave_meta: str, avance: float) -> float:
 # BLOQUES REUTILIZABLES (los usan Vista Ejecutivo y Vista Tiendas)
 # ===========================================================================
 def bloque_cabecera(row, pdv_txt: str, sub_pdv: str, titulo_peq: str, nombre_grande: str, minis: list[str] | None,
-                    lema: str, f: dict, ultima_fibra: dict | None):
+                    lema: str, f: dict, ultima_fibra: dict | None, clave: str = ""):
     c1, c2, c3, c4 = st.columns([1.1, 3.2, 1, 1])
     with c1:
         ui.card(f'<div class="mid">🏬 {h(pdv_txt)}</div><div class="sub t-cyan" style="font-weight:800;font-size:1rem">{h(sub_pdv)}</div>'
                 f'<div class="hr"></div><div class="h t-cyan">📅 CORTE</div><div class="mid">{fecha_txt(mov.fecha_corte)}</div>', "cyan")
     with c2:
-        cuerpo = f'<div class="h">{h(titulo_peq)}</div><div class="big t-cyan" style="font-size:2.4rem">{h(nombre_grande)}</div>'
+        cuerpo = (f'<div class="ancho-total"></div><div class="h">{h(titulo_peq)}</div>'
+                  f'<div class="big t-cyan" style="font-size:clamp(1.4rem,2.6vw,2.2rem)">{h(nombre_grande)}</div>')
         if minis:
             cuerpo += grid(minis, 4)
         if lema:
@@ -181,13 +221,20 @@ def bloque_cabecera(row, pdv_txt: str, sub_pdv: str, titulo_peq: str, nombre_gra
                         '<div class="sub">0 solicitudes en el periodo</div>', "cyan")
     col_real = "t-rojo" if f["cump"] < 0.8 else ("t-amarillo" if f["cump"] < 1 else "t-verde")
     col_proy = "t-rojo" if f["proy"] < 0.8 else ("t-amarillo" if f["proy"] < 1 else "t-verde")
+    conf = M.confianza_proyeccion(row.get("dias_trab"))
     with c3:
-        ui.card(f'<div class="h" style="margin-top:1.2rem">% REAL A LA FECHA</div><div class="big {col_real}" style="margin:1.2rem 0">{pct(f["cump"])}</div>'
-                f'<div class="mid {col_real}" style="font-size:1.3rem">TRAMO {f["tramo"]}</div><div class="sub {col_real}" style="margin:1rem 0 .6rem"><b>{f["etiqueta"]}</b></div>',
+        ui.card(f'<div class="h">% REAL A LA FECHA</div><div class="big {col_real}" style="margin:.5rem 0">{pct(f["cump"])}</div>'
+                f'{tendencia(clave, "cump_ficha") if clave else ""}'
+                f'<div class="mid {col_real}" style="font-size:1.15rem;margin-top:.35rem">TRAMO {f["tramo"]}</div>'
+                f'<div class="sub {col_real}"><b>{f["etiqueta"]}</b></div>',
                 "rojo" if col_real == "t-rojo" else ("amarillo" if col_real == "t-amarillo" else "verde"))
     with c4:
-        ui.card(f'<div class="h" style="margin-top:1.2rem">% PROYECCIÓN</div><div class="big {col_proy}" style="margin:1.2rem 0">{pct(f["proy"])}</div>'
-                f'<div class="mid {col_proy}" style="font-size:1.3rem">TRAMO {f["tramo_proy"]}</div><div class="sub {col_proy}" style="margin:1rem 0 .6rem"><b>{f["etiqueta_proy"] if f["tramo_proy"] == 0 else "TRAMO " + str(f["tramo_proy"])}</b></div>',
+        ui.card(f'<div class="h">% PROYECCIÓN</div>'
+                f'<div class="big {col_proy}" style="margin:.5rem 0">{M.pct_topado(f["proy"], cfg.TOPE_PROYECCION_VISUAL, 2)}</div>'
+                f'{tendencia(clave, "proy_pond") if clave else ""}'
+                f'<div class="mid {col_proy}" style="font-size:1.15rem;margin-top:.35rem">TRAMO {f["tramo_proy"]}</div>'
+                f'<div class="sub {col_proy}"><b>{f["etiqueta_proy"] if f["tramo_proy"] == 0 else "TRAMO " + str(f["tramo_proy"])}</b></div>'
+                f'<div class="ref"><span class="{conf["clase"]}">{conf["icono"]} confianza {conf["nivel"]}</span> · {h(conf["texto"])}</div>',
                 "rojo" if col_proy == "t-rojo" else ("amarillo" if col_proy == "t-amarillo" else "verde"))
 
 
@@ -226,8 +273,11 @@ def bloque_movilidad(row, avance: float):
     for n, nombre, k, color, conv, extra in items:
         extra_txt = f"<b>Peso porta:</b> {pct(row.get(extra), 1)}" if extra else ""
         html_items += ui.producto(n, nombre, row.get(f"{k}_real"), row.get(f"{k}_meta"), row.get(f"{k}_falta"),
-                                  row.get(f"{k}_cump"), row.get(conv) if conv else None, color, extra_txt)
+                                  row.get(f"{k}_cump"), row.get(conv) if conv else None, color, extra_txt,
+                                  corte=avance)
     md(f'<div class="prod-grid g7">{html_items}</div>')
+    md('<div class="ref">La marca negra sobre cada barra es el avance esperado al corte: '
+       'si el color la pasa, el producto va adelantado.</div>')
 
 
 def bloque_bonos(row, jornada: str):
@@ -253,15 +303,25 @@ def bloque_bonos(row, jornada: str):
 
 
 def bloque_fibra(row):
-    fp = v(row.get("factor_prod"))
+    fp, aviso_fp = M.sanear_tasa(row.get("factor_prod"))
+    ti, aviso_ti = M.sanear_tasa(row.get("tasa_inst"))
     cuerpo = '<div class="sec">📶 FIBRA (REAL ENTEL)</div>' + grid([
         celda("Q Validaciones", entero(row.get("q_valid")), f"% Validación {pct(row.get('pct_valid'))}<br>Incorrectas {pct(row.get('valid_inc'))}", True),
         celda("Factibles", entero(row.get("factibles")), f"% Factibles {pct(row.get('pct_fact'))}", True),
         celda("Conv. fibra", pct(row.get("conv_fibra")), "", True),
-        celda("Factor de prod.", pct(fp) if fp <= 1 else f"{fp:.2f}", "", True),
-        celda("Tasa de instalación", pct(row.get("tasa_inst")), "", True),
+        celda("Factor de prod.", pct(fp) if fp is not None else "—",
+              '<span class="t-amarillo">⚠ revisar</span>' if aviso_fp else "", True,
+              color="t-amarillo" if aviso_fp else ""),
+        celda("Tasa de instalación", pct(ti) if ti is not None else "—",
+              '<span class="t-amarillo">⚠ revisar</span>' if aviso_ti else "", True,
+              color="t-amarillo" if aviso_ti else ""),
         celda("Fibra solicitudes", entero(row.get("fib_sol")), f"Pendientes: {entero(row.get('fib_pend'))}", True),
     ], 6)
+    avisos = [a for a in (aviso_fp, aviso_ti) if a]
+    if avisos:
+        cuerpo += ('<div class="ref t-amarillo">⚠ Factor de producción y/o tasa de instalación sobre 100 %. '
+                   'Suele ser un cálculo con problema en el Excel (fórmulas #REF! o divisiones con base cero), '
+                   'no un resultado real.</div>')
     ui.card(cuerpo, "cyan")
 
 
@@ -346,27 +406,27 @@ def bloque_escuchas(clave: str, pdv: str, titulo: str = "ESCUCHAS"):
     cols = st.columns(6)
     with cols[0]:
         ui.card(f'<div class="h">🎧 ESCUCHAS AUDITADAS</div><div class="big t-verde">{entero(r["auditadas"])}</div>'
-                f'<div class="sub" style="font-size:.72rem">{refs("auditadas", entero)}</div>', "cyan")
+                f'<div class="sub" style="font-size:.75rem">{refs("auditadas", entero)}</div>', "cyan")
     with cols[1]:
         ui.card(f'<div class="h">🛰️ STARLINK</div><div class="big t-verde">{pct(r["starlink"], 1)}</div>'
-                f'<div class="sub" style="font-size:.72rem">{refs("starlink")}</div>', "cyan")
+                f'<div class="sub" style="font-size:.75rem">{refs("starlink")}</div>', "cyan")
     with cols[2]:
         ui.card(f'<div class="h">✈️ LATAM PASS</div><div class="big t-verde">{pct(r["latam_pass"], 1)}</div>'
-                f'<div class="sub" style="font-size:.72rem">{refs("latam_pass")}</div>', "cyan")
+                f'<div class="sub" style="font-size:.75rem">{refs("latam_pass")}</div>', "cyan")
     with cols[3]:
         ui.card(f'<div class="h">🏠 HOGAR</div><div class="big t-verde">{pct(r["hogar"], 1)}</div>'
-                f'<div class="sub" style="font-size:.72rem">{refs("hogar")}</div>', "cyan")
+                f'<div class="sub" style="font-size:.75rem">{refs("hogar")}</div>', "cyan")
     with cols[4]:
         ui.card('<div class="h">📡 FIBRA</div>'
                 + grid([celda("Calidad", pct(r["fibra_calidad"], 1), color="t-amarillo"),
                         celda("Estabilidad", pct(r["fibra_estabilidad"], 1), color="t-amarillo")], 2)
-                + f'<div class="sub" style="margin-top:.3rem;font-size:.7rem">{refs("fibra_calidad")}</div>', "cyan")
+                + f'<div class="sub" style="margin-top:.3rem;font-size:.75rem">{refs("fibra_calidad")}</div>', "cyan")
     with cols[5]:
         ui.card('<div class="h">📲 PORTABILIDAD</div>'
                 + grid([celda("Motivo", pct(r["porta_motivo"], 1), color="t-amarillo"),
                         celda("Objeciones", pct(r["porta_objeciones"], 1), color="t-amarillo"),
                         celda("Urgencia", pct(r["porta_urgencia"], 1), color="t-amarillo")], 3)
-                + f'<div class="sub" style="margin-top:.3rem;font-size:.7rem">{refs("porta_motivo")}</div>', "cyan")
+                + f'<div class="sub" style="margin-top:.3rem;font-size:.75rem">{refs("porta_motivo")}</div>', "cyan")
 
 
 def bloque_epa_encuestas(codigo: str):
@@ -392,6 +452,39 @@ def bloque_epa_encuestas(codigo: str):
     else:
         cols = [c_ for c_ in ("fecha", "nota", "tipo_atencion", "literal") if c_ in enc.columns]
         st.dataframe(enc[cols].sort_values("fecha", ascending=False), use_container_width=True, hide_index=True)
+
+
+KPIS_PARES = [("% Real ficha", "cump_ficha", 2), ("Atenciones", "atenciones", 0), ("Conv. móvil", "mov_conv", 1),
+              ("Conv. porta", "porta_conv", 1), ("Conv. fibra", "conv_fibra", 1), ("Att seguro", "att_seg", 1),
+              ("Conv. equipos", "eq_conv", 1), ("EPA", "epa", 1)]
+
+
+def comparacion_pares(row, ej_tienda: pd.DataFrame, ej_ctf: pd.DataFrame, codigo: str):
+    """Cómo se ve este ejecutivo al lado de su tienda y de toda la empresa."""
+    with st.expander("⚖️ CÓMO VA FRENTE A SUS PARES", expanded=True):
+        filas = []
+        for etiqueta, k, dec in KPIS_PARES:
+            val = v(row.get(k))
+            m_t = ej_tienda[k].mean() if k in ej_tienda.columns and not ej_tienda.empty else None
+            m_c = ej_ctf[k].mean() if k in ej_ctf.columns and not ej_ctf.empty else None
+            fmt = (lambda x: entero(x)) if k == "atenciones" else (lambda x: pct(x, dec))
+            serie_ctf = pd.to_numeric(ej_ctf[k], errors="coerce").dropna() if k in ej_ctf.columns else pd.Series(dtype=float)
+            if len(serie_ctf) > 1:
+                puesto = int((serie_ctf > val).sum()) + 1
+                pos = f"{puesto} de {len(serie_ctf)}"
+                cls = "sem-v" if puesto <= len(serie_ctf) / 3 else ("sem-a" if puesto <= 2 * len(serie_ctf) / 3 else "sem-r")
+            else:
+                pos, cls = "—", ""
+            dif_t = (val - m_t) if m_t is not None and pd.notna(m_t) else None
+            factor = 1 if k == "atenciones" else 100
+            filas.append([h(etiqueta), fmt(val), fmt(m_t) if m_t is not None else "—",
+                          fmt(m_c) if m_c is not None else "—",
+                          ui.delta(dif_t * factor, "" if k == "atenciones" else " pts",
+                                   0 if k == "atenciones" else 1) if dif_t is not None else "—",
+                          f'<span class="celda-sem rango {cls}">{pos}</span>' if cls else pos,
+                          tendencia(codigo, k) or "—"])
+        ui.card(ui.tabla(["KPI", "Este ejecutivo", "Prom. tienda", "Prom. CTF", "vs. tienda", "Puesto en CTF", "vs. corte anterior"],
+                         filas, izq=1), "cyan")
 
 
 def bloque_prioridades(row, titulo="3 PRIORIDADES DEL CORTE"):
@@ -539,20 +632,34 @@ def vista_ejecutivo():
     minis = [mini("👤 Nombre", h(nombre or "Por completar")),
              mini("⏳ Antigüedad", h(antig)),
              mini("🕒 Jornada", jornada),
-             mini("🎂 Cumpleaños", h(cumple) + (f'<div class="t-cyan" style="font-size:.7rem">{h(cuando_cumple)}</div>' if cuando_cumple else ""))]
+             mini("🎂 Cumpleaños", h(cumple) + (f'<div class="t-cyan" style="font-size:.75rem">{h(cuando_cumple)}</div>' if cuando_cumple else ""))]
     rf = M.resumen_fibra_ejecutivo(fib.solicitudes if fib else None, codigo, mov.fecha_corte)
-    bloque_cabecera(e, f"PDV {pdv}", tienda, "EJECUTIVO SELECCIONADO", codigo, minis, "", f, rf)
+    bloque_cabecera(e, f"PDV {pdv}", tienda, "EJECUTIVO SELECCIONADO", codigo, minis, "", f, rf, clave=codigo)
 
     prom = ej_tienda.loc[ej_tienda["ejecutivo"] != codigo, "atenciones"]
     bloque_indicadores(e, f, prom.mean() if not prom.empty else 0)
+
+    # lo primero que hay que hacer, arriba y siempre visible
+    bloque_prioridades(e)
+    with st.expander("📤 RESUMEN PARA ENVIAR AL EJECUTIVO", expanded=False):
+        texto = M.resumen_accionable(e, nombre, tienda, mov.fecha_corte, f, mov.estandares, mov.avance_esperado)
+        st.code(texto, language=None)
+        st.download_button("📥 Descargar resumen (.txt)", texto.encode("utf-8"),
+                           file_name=f"resumen_{codigo}_{fecha_txt(mov.fecha_corte).replace('/', '-')}.txt",
+                           mime="text/plain", key="dl_resumen_ej")
+
     bloque_movilidad(e, avance)
-    bloque_bonos(e, jornada)
+    comparacion_pares(e, ej_tienda, ejecutivos, codigo)
     bloque_fibra(e)
     bloque_equipos_seguros_acc(e, avance)
-    bloque_ene_prot_epa(e)
-    bloque_escuchas(codigo, pdv)
-    bloque_epa_encuestas(codigo)
-    bloque_prioridades(e)
+    with st.expander("💰 BONOS DEL EJECUTIVO", expanded=False):
+        bloque_bonos(e, jornada)
+    with st.expander("⚡ ENERGÍA · PROTECCIÓN · EPA", expanded=False):
+        bloque_ene_prot_epa(e)
+    with st.expander("🎧 ESCUCHAS", expanded=False):
+        bloque_escuchas(codigo, pdv)
+    with st.expander("🗣️ EPA Y ENCUESTAS", expanded=False):
+        bloque_epa_encuestas(codigo)
     md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Ejecutivo · {h(tienda)} · Ejecutivos: {len(ej_tienda)}</div>')
 
 
@@ -585,18 +692,72 @@ def vista_tiendas():
     avance = avance_calendario(row)
 
     md(f'<div class="card" style="padding:.6rem 1rem">Vista: <b>{h(nombre_grande)}</b> · Ejecutivos: <b>{len(ej)}</b> · Corte: <b>{fecha_txt(mov.fecha_corte)}</b></div>')
-    bloque_cabecera(row, pdv_txt, sub_pdv, titulo, nombre_grande, None, "¡Vamos por más! Cada venta cuenta.", f, None)
+    bloque_cabecera(row, pdv_txt, sub_pdv, titulo, nombre_grande, None, "¡Vamos por más! Cada venta cuenta.", f, None,
+                    clave="CTF" if sel == "CTF" else sel)
     bloque_indicadores(row, f, None)
+    tablero_ejecutivos(ej, f)
     bloque_movilidad(row, avance)
     bloque_fibra(row)
-    bloque_equipos_seguros_acc(row, avance)
-    bloque_ene_prot_epa(row)
-    tabla_bono_winner(ej)
-    tabla_cumplimientos(ej, avance)
-    tabla_gestion(ej)
-    tabla_ranking(ej)
-    bloque_escuchas(escucha_clave, escucha_pdv, f"ESCUCHAS · {nombre_grande}")
+    with st.expander("📱 EQUIPOS · SEGUROS · ACCESORIOS", expanded=True):
+        bloque_equipos_seguros_acc(row, avance)
+    with st.expander("⚡ ENERGÍA · PROTECCIÓN · EPA", expanded=False):
+        bloque_ene_prot_epa(row)
+    with st.expander("👥 CUMPLIMIENTOS DE EJECUTIVOS", expanded=True):
+        tabla_cumplimientos(ej, avance)
+    with st.expander("🎯 GESTIÓN DE EJECUTIVOS (conversiones y attach)", expanded=False):
+        tabla_gestion(ej)
+    with st.expander("🏆 RANKING CTF DE EJECUTIVOS", expanded=False):
+        tabla_ranking(ej)
+    with st.expander("🏆 BONO WINNER", expanded=False):
+        tabla_bono_winner(ej)
+    with st.expander("🎧 ESCUCHAS", expanded=False):
+        bloque_escuchas(escucha_clave, escucha_pdv, f"ESCUCHAS · {nombre_grande}")
     md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Tiendas / CTF · {h(nombre_grande)}</div>')
+
+
+def tablero_ejecutivos(ej: pd.DataFrame, f: dict):
+    """Quién necesita ayuda hoy: el semáforo por persona, en una sola mirada."""
+    if ej.empty:
+        return
+    filas = []
+    for _, r in ej.iterrows():
+        fe = M.ficha(r, mov.pesos)
+        al = M.alertas(r, mov.estandares, mov.avance_esperado)
+        filas.append({"cod": r["ejecutivo"], "nombre": mov.nombres.get(r["ejecutivo"], ""),
+                      "cump": fe["cump"], "tramo": fe["tramo"], "alertas": len(al),
+                      "prio": M.prioridades(al, 1)})
+    filas.sort(key=lambda x: x["cump"])
+    # "en riesgo" se mide contra el avance esperado del mes, no contra el 100 %:
+    # el día 3 nadie lleva 80 % y marcar a todos en rojo no dice nada.
+    corte = mov.avance_esperado or 0.0
+    en_riesgo = [x for x in filas if x["cump"] < corte]
+
+    def tarjetas(lista):
+        out = '<div class="grid g4" style="margin-top:.5rem">'
+        for x in lista:
+            rel = (x["cump"] / corte) if corte else None
+            col = ui.color_cump(rel)
+            borde = {"t-rojo": "#fb7185", "t-amarillo": "#fbbf24", "t-verde": "#4ade80"}.get(col, "#1e3a8a")
+            foco = x["prio"][0]["foco"] if x["prio"] else "Sin alertas"
+            out += (f'<div class="mini" style="border-color:{borde};text-align:left;padding:.5rem .6rem">'
+                    f'<div class="l">{h(x["cod"])}</div>'
+                    f'<div class="v {col}" style="font-size:1.15rem">{pct(x["cump"], 1)}</div>'
+                    f'<div class="ref" style="text-align:left">Tramo {x["tramo"]} · {x["alertas"]} alertas<br>'
+                    f'<b>{h(foco)}</b></div></div>')
+        return out + "</div>"
+
+    if en_riesgo:
+        intro = (f'<b>{len(en_riesgo)} de {len(filas)}</b> ejecutivos van bajo el avance esperado del mes '
+                 f'({pct(corte, 1)}). Estos son los que más apoyo necesitan.')
+    else:
+        intro = (f'Nadie va bajo el avance esperado del mes ({pct(corte, 1)}). '
+                 f'Aun así, estos son los cumplimientos más bajos del equipo.')
+    cuerpo = (f'<div class="sec">🚦 QUIÉN NECESITA APOYO HOY</div>'
+              f'<div class="ref" style="text-align:left">{intro}</div>' + tarjetas(filas[:8]))
+    ui.card(cuerpo, "cyan")
+    if len(filas) > 8:
+        with st.expander(f"Ver los {len(filas)} ejecutivos", expanded=False):
+            ui.card(tarjetas(filas[8:]), "cyan")
 
 
 # ===========================================================================
@@ -635,10 +796,24 @@ def vista_jefe():
                 cuerpo += '<div class="sub t-verde">Sin alertas.</div>'
             ui.card(cuerpo, "rosa")
 
+    with st.expander("📤 RESUMEN DE LA TIENDA PARA ENVIAR", expanded=False):
+        partes = []
+        for _, r in ej.sort_values("cump_ficha").iterrows():
+            fr = M.ficha(r, mov.pesos)
+            partes.append(M.resumen_accionable(r, mov.nombres.get(r["ejecutivo"], ""), tienda,
+                                               mov.fecha_corte, fr, mov.estandares, mov.avance_esperado))
+        texto = ("\n\n" + "-" * 60 + "\n\n").join(partes)
+        st.download_button("📥 Descargar resumen de la tienda (.txt)", texto.encode("utf-8"),
+                           file_name=f"resumen_{pdv}_{fecha_txt(mov.fecha_corte).replace('/', '-')}.txt",
+                           mime="text/plain", key="dl_resumen_tienda")
+        st.code(texto[:4000] + ("\n…" if len(texto) > 4000 else ""), language=None)
+
     bloque_movilidad(t, avance)
     bloque_fibra(t)
-    bloque_equipos_seguros_acc(t, avance)
-    bloque_ene_prot_epa(t)
+    with st.expander("📱 EQUIPOS · SEGUROS · ACCESORIOS", expanded=False):
+        bloque_equipos_seguros_acc(t, avance)
+    with st.expander("⚡ ENERGÍA · PROTECCIÓN · EPA", expanded=False):
+        bloque_ene_prot_epa(t)
     md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Jefe de tienda · {h(tienda)}</div>')
 
 
@@ -746,12 +921,17 @@ def vista_fibra_tiendas():
              ("✅ Real fibra", entero(real), "Instaladas válidas", "t-verde"),
              ("📉 Faltan", entero(meta - real), "Para alcanzar meta", "t-rojo"),
              ("📊 Cumplimiento", pct(cump, 1), "Real / meta", ui.color_cump(cump / max(avance, 1e-9))),
-             ("🚀 Proyección", pct(proy, 1), "Proyección de cierre", ui.color_cump(proy)),
+             ("🚀 Proyección", M.pct_topado(proy, cfg.TOPE_PROYECCION_VISUAL), "Proyección de cierre", ui.color_cump(proy)),
              ("🕐 Deben llevar", str(M.ceil_pos(deben_)), "Instaladas al corte", "t-cyan"),
-             ("🔧 Tasa instalación", pct(tasa, 1), "Instaladas / órdenes", ui.color_cump(tasa))]
+             ("🔧 Tasa instalación", M.pct_topado(tasa, cfg.TOPE_TASA_VISUAL), "Instaladas / órdenes", ui.color_cump(tasa))]
     for col, (t, val, sub, cl) in zip(c, datos):
         with col:
             ui.kpi(t, val, sub, cl, "")
+
+    conf = M.confianza_proyeccion(fila_ref.get("dias_trab"))
+    md(f'<div class="ref"><span class="{conf["clase"]}">{conf["icono"]} Confianza {conf["nivel"]}</span> · {h(conf["texto"])} '
+       f'Las proyecciones sobre {pct(cfg.TOPE_PROYECCION_VISUAL, 0)} y las tasas sobre 100 % se muestran topadas: '
+       f'suelen venir de una base muy chica o de un cálculo con problema en el Excel.</div>')
 
     # --- tabla cumplimiento fibra por ejecutivo -----------------------------
     ui.seccion("👥", "CUMPLIMIENTO FIBRA POR EJECUTIVO")
@@ -768,31 +948,35 @@ def vista_fibra_tiendas():
         va = v(mv.iloc[0]["pct_valid"]) if not mv.empty else 0.0
         sem_c = "sem-v" if cu >= avance else ("sem-a" if cu >= avance * 0.7 else "sem-r")
         sem_p = "sem-v" if pr >= 1 else ("sem-a" if pr >= 0.8 else "sem-r")
+        ti_txt = M.pct_topado(ti, cfg.TOPE_TASA_VISUAL, 1) + (" ⚠" if ti > cfg.TOPE_TASA_VISUAL * 1.05 else "")
         filas.append([h(cod), h(nombre_tienda.get(r["pdv"], r["pdv"])), entero(m_), entero(rn), entero(ra), entero(tot),
-                      f'<span class="celda-sem {sem_c}">{pct(cu, 0)}</span>', f'<span class="celda-sem {sem_p}">{pct(pr, 0)}</span>',
+                      f'<span class="celda-sem {sem_c}">{pct(cu, 0)}</span>',
+                      f'<span class="celda-sem {sem_p}">{M.pct_topado(pr, cfg.TOPE_PROYECCION_VISUAL, 0)}</span>',
                       str(de), entero(r.get("FIBRA PEND. SEPT")), entero(r.get("PEND. OCT")),
-                      f'<span class="celda-sem {"sem-v" if ti >= 0.75 else ("sem-a" if ti >= 0.4 else "sem-r")}">{pct(ti, 1)}</span>',
+                      f'<span class="celda-sem {"sem-v" if 0.75 <= ti <= cfg.TOPE_TASA_VISUAL * 1.05 else ("sem-a" if ti >= 0.4 else "sem-r")}">{ti_txt}</span>',
                       f'<span class="celda-sem {"sem-v" if va >= 0.85 else ("sem-a" if va >= 0.7 else "sem-r")}">{pct(va, 1)}</span>'])
     ui.card(ui.tabla(["Ejecutivo", "Tienda", "Meta", "Real", "Afinidad", "Total", "Cump.", "Proy.", "Deben",
                       "Pend. sept.", "Pend. oct.", "Tasa inst.", "Valid."], filas, izq=2), "cyan")
 
     # --- evolutivo diario ----------------------------------------------------
-    ui.seccion("📅", "EVOLUTIVO DIARIO DE SOLICITUDES")
+    expander_evo = st.expander("📅 EVOLUTIVO DIARIO DE SOLICITUDES", expanded=False)
     ref = fib.fecha_actualizacion or mov.fecha_corte
-    if not s.empty and ref:
-        dias = [dt.date(ref.year, ref.month, d) for d in range(1, ref.day + 1)]
-        filas = []
-        for cod in sorted(s["ejecutivo"].unique()):
-            ss = s[s["ejecutivo"] == cod]
-            fechas = [f_ for f_ in ss["fecha_solicitud"] if isinstance(f_, dt.date) and pd.notna(f_)]
-            ultima = max(fechas) if fechas else None
-            sin = max(0, (ref - ultima).days) if ultima else None
-            por_dia = [int((ss["fecha_solicitud"] == d).sum()) for d in dias]
-            celdas = [f'<span class="celda-sem {"sem-v" if n >= 3 else ("sem-a" if n >= 1 else "")}">{n or ""}</span>' for n in por_dia]
-            filas.append([h(ss.iloc[0]["pdv"]), h(cod), fecha_txt(ultima), str(sin) if sin is not None else "—", str(sum(por_dia))] + celdas)
-        ui.card(ui.tabla(["PDV", "Ejecutivo", "Última solicitud", "Días sin solicitud", "Total"] + [d.strftime("%d/%m") for d in dias], filas, izq=2), "cyan")
+    with expander_evo:
+      if not s.empty and ref:
+          dias = [dt.date(ref.year, ref.month, d) for d in range(1, ref.day + 1)]
+          filas = []
+          for cod in sorted(s["ejecutivo"].unique()):
+              ss = s[s["ejecutivo"] == cod]
+              fechas = [f_ for f_ in ss["fecha_solicitud"] if isinstance(f_, dt.date) and pd.notna(f_)]
+              ultima = max(fechas) if fechas else None
+              sin = max(0, (ref - ultima).days) if ultima else None
+              por_dia = [int((ss["fecha_solicitud"] == d).sum()) for d in dias]
+              celdas = [f'<span class="celda-sem {"sem-v" if n >= 3 else ("sem-a" if n >= 1 else "")}">{n or ""}</span>' for n in por_dia]
+              filas.append([h(ss.iloc[0]["pdv"]), h(cod), fecha_txt(ultima), str(sin) if sin is not None else "—", str(sum(por_dia))] + celdas)
+          ui.card(ui.tabla(["PDV", "Ejecutivo", "Última solicitud", "Días sin solicitud", "Total"] + [d.strftime("%d/%m") for d in dias], filas, izq=2), "cyan")
 
-    bloque_reagendamientos(s)
+    with st.expander("🔁 REAGENDAMIENTOS", expanded=False):
+        bloque_reagendamientos(s)
 
     # --- agenda y estado de instalaciones ------------------------------------
     ui.seccion("📆", "AGENDA Y ESTADO DE INSTALACIONES")
@@ -902,7 +1086,7 @@ def vista_fibra_ejecutivos():
              ("📉 Faltan", entero(meta - real), "Para llegar a meta", "t-rojo"),
              ("🕐 Debe llevar", str(M.ceil_pos(e.get("fib_deben"))), "Según el corte", "t-cyan"),
              ("📊 Cumpl.", pct(cump, 1), "Real / meta", ui.color_cump(cump / max(avance, 1e-9))),
-             ("🚀 Proyección", pct(proy, 1), "Cierre proyectado", ui.color_cump(proy))]
+             ("🚀 Proyección", M.pct_topado(proy, cfg.TOPE_PROYECCION_VISUAL), "Cierre proyectado", ui.color_cump(proy))]
     for col, (t, val, sub, cl) in zip(c, datos):
         with col:
             ui.kpi(t, val, sub, cl, "")

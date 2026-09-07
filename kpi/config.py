@@ -105,18 +105,36 @@ ESTANDAR_TASA_INSTALACION = 0.75
 ESTANDAR_PCT_FACTIBLES = 0.50
 
 # ---------------------------------------------------------------------------
+# Proyecciones honestas
+# ---------------------------------------------------------------------------
+DIAS_MIN_PROYECCION = 5      # con menos días trabajados la proyección es poco confiable
+TOPE_PROYECCION_VISUAL = 1.50  # no se muestran proyecciones sobre 150 % (se marcan como "> 150 %")
+TOPE_TASA_VISUAL = 1.00      # tasas / factores sobre 100 % indican un dato con problema
+
+# ---------------------------------------------------------------------------
 # Apariencia
 # ---------------------------------------------------------------------------
+# Paleta revisada para daltonismo (protanopia / deuteranopia / tritanopia) y
+# contraste AA sobre el fondo oscuro. El verde pasó de lima (#84cc16) a
+# #4ade80 porque el lima y el amarillo se confundían en visión protán.
 COLORES = {
     "fondo": "#050b1a",
     "card": "#0b1631",
     "borde": "#1e3a8a",
     "cyan": "#22d3ee",
-    "verde": "#84cc16",
-    "amarillo": "#facc15",
-    "rojo": "#f43f5e",
-    "morado": "#a78bfa",
-    "naranjo": "#fb923c",
+    "verde": "#4ade80",
+    "amarillo": "#fbbf24",
+    "rojo": "#fb7185",
+    "morado": "#c4b5fd",
+    "naranjo": "#fdba74",
     "texto": "#e5e7eb",
-    "texto2": "#9ca3af",
+    "texto2": "#a8b3c4",
+}
+
+# Colores de relleno de los semáforos (texto oscuro encima) y de las barras.
+SEMAFORO = {
+    "v": ("#22c55e", "#04240f"),
+    "a": ("#facc15", "#3a2900"),
+    "r": ("#f87171", "#3f0708"),
+    "t": ("#0369a1", "#ffffff"),
 }

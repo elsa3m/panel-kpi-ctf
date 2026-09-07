@@ -31,6 +31,23 @@ Repositorio en GitHub → https://share.streamlit.io → *Create app* → `app.p
 - `kpi/loader.py` — lectura de los Excel.
 - `kpi/metrics.py` — bonos, alertas, prioridades del corte.
 - `kpi/ui.py` — CSS y tarjetas.
+- `kpi/historia.py` — histórico de cortes (tendencias y variación vs. corte anterior).
 - `kpi/pdf.py` — ficha PDF.
+
+## Histórico de cortes
+
+Cada Excel MOV-FIBRA que se carga queda registrado en `data/historia.csv` (una fila
+por ejecutivo y por corte). Con dos o más cortes el panel muestra la variación
+("+3,2 pts vs. 30/08") y un mini-gráfico de tendencia.
+
+En Streamlit Cloud la carpeta `data/` se borra cuando la app reinicia. Por eso en
+*Gestión de archivos* hay un botón para **descargar el histórico** y otro para
+**volver a cargarlo**. Conviene descargarlo después de cada corte.
+
+## Después de tocar `kpi/`
+
+Streamlit Cloud recarga `app.py` solo, pero mantiene en memoria los módulos de
+`kpi/`. Después de subir cambios en esa carpeta hay que usar **Reboot app** en
+share.streamlit.io.
 
 Fuentes de datos (todas se cargan desde la app): **MOV-FIBRA** (DRIVE TIENDAS), **FIBRA DRIVE**, **ESCUCHAS ENTEL** (export de Power BI) y **COLABORADORES** (dotación; solo se guardan código, nombre, ingreso, nacimiento y jornada).
