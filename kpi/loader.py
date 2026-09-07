@@ -110,6 +110,7 @@ class DatosMovFibra:
     jornadas: dict         # código ejecutivo -> FT / PT (hoja CIERRE BONOS)
     epa_ejecutivo: pd.DataFrame
     encuestas: pd.DataFrame
+    umbrales: dict = field(default_factory=dict)   # hoja CONV-CUMP: clave -> {"meta": x, "amarillo": y}
     archivo: str = ""
     avisos: list = field(default_factory=list)
 
@@ -240,6 +241,32 @@ def _leer_encuestas(wb) -> pd.DataFrame:
     return pd.DataFrame(out, columns=cols)
 
 
+# columnas de la hoja CONV-CUMP -> clave interna del panel
+CONV_CUMP_COLS = {
+    6: "mov_conv", 7: "sus_conv", 8: "porta_conv", 9: "porta_peso", 10: "cvm_50", 11: "conv_fibra",
+    12: "tasa_inst", 13: "pct_valid", 14: "pct_fact", 15: "eq_conv", 16: "att_eq_linea", 17: "att_seg",
+    18: "acc_conv", 19: "ene_att", 20: "prot_att", 21: "epa",
+    27: "mov_cump", 28: "sus_cump", 29: "l1_cump", 30: "l2_cump", 31: "porta_cump", 32: "fib_cump",
+    33: "eq_cump", 34: "seg_cump", 35: "acc_cump",
+}
+
+
+def _leer_conv_cump(wb) -> dict:
+    """Umbrales verde (fila 7 = META) y amarillo (fila 3) de la hoja CONV-CUMP."""
+    if "CONV- CUMP" not in wb.sheetnames:
+        return {}
+    rows = list(wb["CONV- CUMP"].iter_rows(min_row=1, max_row=8, values_only=True))
+    if len(rows) < 7:
+        return {}
+    out = {}
+    for col, clave in CONV_CUMP_COLS.items():
+        meta = _num(rows[6][col - 1]) if col - 1 < len(rows[6]) else None
+        amar = _num(rows[2][col - 1]) if col - 1 < len(rows[2]) else None
+        if meta is not None:
+            out[clave] = {"meta": meta, "amarillo": amar if amar is not None else meta * 0.7}
+    return out
+
+
 def cargar_mov_fibra(path: Path | str) -> DatosMovFibra:
     path = Path(path)
     avisos: list[str] = []
@@ -277,6 +304,7 @@ def cargar_mov_fibra(path: Path | str) -> DatosMovFibra:
         jornadas=_leer_jornadas(wb),
         epa_ejecutivo=_leer_epa(wb),
         encuestas=_leer_encuestas(wb),
+        umbrales=_leer_conv_cump(wb),
         archivo=path.name,
         avisos=avisos,
     )
@@ -368,11 +396,13 @@ def cargar_fibra(path: Path | str) -> DatosFibra:
 # ---------------------------------------------------------------------------
 # ESCUCHAS ENTEL (opcional)
 # ---------------------------------------------------------------------------
-ESCUCHAS_COLS = ["ejecutivo", "tienda", "latam_pass", "hogar", "fibra_calidad", "fibra_estabilidad",
-                 "porta_motivo", "porta_objeciones", "porta_urgencia"]
+ESCUCHAS_COLS = ["ejecutivo", "tienda", "auditadas", "starlink", "latam_pass", "hogar", "fibra_calidad",
+                 "fibra_estabilidad", "porta_motivo", "porta_objeciones", "porta_urgencia"]
 ESCUCHAS_ALIAS = {
     "ejecutivo": ["EJECUTIVO", "USUARIO", "COD EJECUTIVO"],
     "tienda": ["TIENDA", "PDV", "NOMBRE TIENDA"],
+    "auditadas": ["ESCUCHAS AUDITADAS", "AUDITADAS", "Q ESCUCHAS", "ESCUCHAS"],
+    "starlink": ["STARLINK"],
     "latam_pass": ["LATAM PASS", "LATAM"],
     "hogar": ["HOGAR"],
     "fibra_calidad": ["FIBRA CALIDAD", "CALIDAD"],

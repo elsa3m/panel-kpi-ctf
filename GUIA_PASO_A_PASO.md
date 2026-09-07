@@ -183,7 +183,7 @@ git init
 git add .
 git commit -m "Panel KPI CTF - version inicial"
 git branch -M main
-git remote add origin https://github.com/TU_USUARIO/panel-kpi-ctf.git
+git remote add origin https://github.com/elsa3m/panel-kpi-ctf.git
 git push -u origin main
 ```
 
@@ -207,7 +207,7 @@ Streamlit Cloud detecta el push y reinicia la app automáticamente.
 
 1. Entra a https://share.streamlit.io e inicia sesión con tu cuenta de GitHub (así puede ver tus repositorios).
 2. Clic en **Create app** → **Deploy a public app from GitHub** (aunque el repo sea privado, funciona).
-3. **Repository**: `TU_USUARIO/panel-kpi-ctf` · **Branch**: `main` · **Main file path**: `app.py`.
+3. **Repository**: `elsa3m/panel-kpi-ctf` · **Branch**: `main` · **Main file path**: `app.py`.
 4. **App URL**: elige el subdominio, por ejemplo `kpi-ctf` → la app quedará en `https://kpi-ctf.streamlit.app`.
 5. (Opcional) En **Advanced settings** deja Python 3.11 o 3.12.
 6. Clic en **Deploy**. En 1–3 minutos la app estará en línea.

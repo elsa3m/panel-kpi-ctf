@@ -5,8 +5,8 @@ Punto de entrada de la aplicación.  Ejecutar con:  streamlit run app.py
 """
 from __future__ import annotations
 
+import calendar
 import datetime as dt
-import os
 
 import pandas as pd
 import streamlit as st
@@ -54,11 +54,12 @@ def cargar(nombre: str):
 # cabecera
 # ---------------------------------------------------------------------------
 logo = cfg.ASSETS_DIR / "logo.png"
-c1, c2, c3 = st.columns([1, 2, 1])
+c1, c2, c3 = st.columns([1, 2.4, 1])
 with c1:
     if logo.exists():
-        st.image(str(logo), width=220)
-md('<h1 class="titulo">PANEL KPI CTF</h1>')
+        st.image(str(logo), width=260)
+with c2:
+    md('<h1 class="titulo">PANEL KPI CTF</h1>')
 
 VISTAS = ["👤 Vista Ejecutivo", "🏬 Vista Tiendas / CTF", "👔 Jefe de Tienda", "📡 Fibra Tiendas", "👷 Fibra Ejecutivos"]
 vista = st.radio("Vista", VISTAS, horizontal=True, label_visibility="collapsed")
@@ -105,188 +106,263 @@ if mov is None:
 for aviso in mov.avisos:
     st.warning(aviso)
 
-md(f'<div class="card cyan" style="padding:.6rem 1rem">📅 <b>DATOS ACTUALIZADOS AL: {fecha_txt(mov.fecha_corte)}</b> '
-   f'<span class="t-gris">· Fuente: MOV-FIBRA · L{loader.C.HEADER_ROW}</span></div>')
+_f1, _slot_pdf = st.columns([2.7, 1])
+with _f1:
+    md(f'<div class="card cyan" style="padding:.7rem 1rem;margin-bottom:.4rem">📅 <b>DATOS ACTUALIZADOS AL: {fecha_txt(mov.fecha_corte)}</b> '
+       f'<span class="t-gris">· Fuente: MOV-FIBRA · L{loader.C.HEADER_ROW}</span></div>')
 
 tiendas = mov.tiendas
 ejecutivos = mov.ejecutivos[mov.ejecutivos["activo"]].copy()
 nombre_tienda = dict(zip(tiendas["pdv"], tiendas["tienda"]))
 etiqueta_tienda = {p: f"{n} · PDV {p}" for p, n in nombre_tienda.items()}
+NOMBRE_ARCHIVO = (loader.ruta_fuente("MOV-FIBRA").with_suffix(".nombre.txt"))
+NOMBRE_ARCHIVO = NOMBRE_ARCHIVO.read_text(encoding="utf-8") if NOMBRE_ARCHIVO.exists() else mov.archivo
+
+
+def avance_calendario(row) -> float:
+    """Avance esperado como en el panel original: días trabajados / días del mes del corte."""
+    dias_mes = calendar.monthrange(mov.fecha_corte.year, mov.fecha_corte.month)[1] if mov.fecha_corte else 30
+    return v(row.get("dias_trab")) / dias_mes if dias_mes else 0.0
+
+
+def deben(row, clave_meta: str, avance: float) -> float:
+    return v(row.get(clave_meta)) * avance
 
 
 # ===========================================================================
-# BLOQUES REUTILIZABLES
+# BLOQUES REUTILIZABLES (los usan Vista Ejecutivo y Vista Tiendas)
 # ===========================================================================
-def bloque_movilidad(e: pd.Series, avance: float):
-    ui.seccion("📱", "ENTEL – MOVILIDAD")
-    md(f'<span class="pill">📍 AVANCE ESPERADO: {pct(avance, 1)}</span>')
+def bloque_cabecera(row, pdv_txt: str, sub_pdv: str, titulo_peq: str, nombre_grande: str, minis: list[str] | None,
+                    lema: str, f: dict, ultima_fibra: dict | None):
+    c1, c2, c3, c4 = st.columns([1.1, 3.2, 1, 1])
+    with c1:
+        ui.card(f'<div class="mid">🏬 {h(pdv_txt)}</div><div class="sub t-cyan" style="font-weight:800;font-size:1rem">{h(sub_pdv)}</div>'
+                f'<div class="hr"></div><div class="h t-cyan">📅 CORTE</div><div class="mid">{fecha_txt(mov.fecha_corte)}</div>', "cyan")
+    with c2:
+        cuerpo = f'<div class="h">{h(titulo_peq)}</div><div class="big t-cyan" style="font-size:2.4rem">{h(nombre_grande)}</div>'
+        if minis:
+            cuerpo += grid(minis, 4)
+        if lema:
+            cuerpo += f'<div class="sub" style="font-size:1.4rem;font-style:italic;color:#e5e7eb">{h(lema)}</div>'
+        ui.card(cuerpo, "")
+        if ultima_fibra is not None:
+            if ultima_fibra["ultima"]:
+                cuando = "Hoy" if ultima_fibra["hoy"] else (f"Hace {ultima_fibra['dias']} días" if ultima_fibra["dias"] is not None else "")
+                ui.card(f'<div class="h t-cyan">ÚLTIMA SOLICITUD DE FIBRA</div><div class="mid t-verde">📅 {fecha_txt(ultima_fibra["ultima"])}</div>'
+                        f'<div class="sub">{cuando} · {ultima_fibra["periodo"]} solicitudes en el periodo</div>', "cyan")
+            else:
+                ui.card('<div class="h t-cyan">ÚLTIMA SOLICITUD DE FIBRA</div><div class="mid t-rojo">Sin solicitudes</div>'
+                        '<div class="sub">0 solicitudes en el periodo</div>', "cyan")
+    col_real = "t-rojo" if f["cump"] < 0.8 else ("t-amarillo" if f["cump"] < 1 else "t-verde")
+    col_proy = "t-rojo" if f["proy"] < 0.8 else ("t-amarillo" if f["proy"] < 1 else "t-verde")
+    with c3:
+        ui.card(f'<div class="h" style="margin-top:1.2rem">% REAL A LA FECHA</div><div class="big {col_real}" style="margin:1.2rem 0">{pct(f["cump"])}</div>'
+                f'<div class="mid {col_real}" style="font-size:1.3rem">TRAMO {f["tramo"]}</div><div class="sub {col_real}" style="margin:1rem 0 .6rem"><b>{f["etiqueta"]}</b></div>',
+                "rojo" if col_real == "t-rojo" else ("amarillo" if col_real == "t-amarillo" else "verde"))
+    with c4:
+        ui.card(f'<div class="h" style="margin-top:1.2rem">% PROYECCIÓN</div><div class="big {col_proy}" style="margin:1.2rem 0">{pct(f["proy"])}</div>'
+                f'<div class="mid {col_proy}" style="font-size:1.3rem">TRAMO {f["tramo_proy"]}</div><div class="sub {col_proy}" style="margin:1rem 0 .6rem"><b>{f["etiqueta_proy"] if f["tramo_proy"] == 0 else "TRAMO " + str(f["tramo_proy"])}</b></div>',
+                "rojo" if col_proy == "t-rojo" else ("amarillo" if col_proy == "t-amarillo" else "verde"))
+
+
+def bloque_indicadores(row, f: dict, prom_pares: float | None):
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        sub = ""
+        if prom_pares is not None:
+            dif = v(row["atenciones"]) - prom_pares
+            sub = f"Prom. pares FULL: {entero(prom_pares)} · <b class='{'t-verde' if dif >= 0 else 't-rojo'}'>{'+' if dif >= 0 else ''}{entero(dif)}</b>"
+        ui.kpi("Atenciones", entero(row["atenciones"]), sub, "", "", "👤")
+    with k2:
+        ui.kpi("Días restantes", entero(row["dias_rest"]), "", "", "", "📅")
+    with k3:
+        ui.kpi("Meta EPA", pct(row["epa_meta"], 0), "", "", "", "🎯")
+    with k4:
+        ui.kpi("EPA actual", pct(row["epa"], 1), "", ui.color_cump(v(row["epa"]) / v(row["epa_meta"], 1) if v(row["epa_meta"]) else None), "")
+    with k5:
+        col = "t-rojo" if f["cump"] < 0.8 else ("t-amarillo" if f["cump"] < 1 else "t-verde")
+        ui.kpi("Tramo real", str(f["tramo"]), f'<b class="{col}">{f["etiqueta"]}</b>', col, "", "🏅")
+
+
+def bloque_movilidad(row, avance: float):
+    md(f'<div class="card" style="padding:.6rem 1.1rem;display:flex;justify-content:space-between;align-items:center">'
+       f'<span class="sec">📱 ENTEL – MOVILIDAD</span><span class="pill">📍 AVANCE ESPERADO: {pct(avance, 1)}</span></div>')
     items = [
-        (1, "Total móvil", "mov", "#2563eb", "mov_conv"),
-        (2, "Suscripción", "sus", "#0d9488", "sus_conv"),
-        (3, "Migraciones", "mis", "#a855f7", None),
-        (4, "1ra línea", "l1", "#ea580c", None),
-        (5, "2da línea", "l2", "#2563eb", None),
-        (6, "Portabilidad", "porta", "#16a34a", "porta_conv"),
-        (7, "Fibra", "fib", "#0891b2", "conv_fibra"),
+        (1, "Total móvil", "mov", "#2563eb", "mov_conv", None),
+        (2, "Suscripción", "sus", "#0d9488", "sus_conv", None),
+        (3, "Migraciones", "mis", "#a855f7", None, None),
+        (4, "1ra línea", "l1", "#ea580c", None, None),
+        (5, "2da línea", "l2", "#2563eb", None, None),
+        (6, "Portabilidad", "porta", "#16a34a", "porta_conv", "porta_peso"),
+        (7, "Fibra", "fib", "#0891b2", "conv_fibra", None),
     ]
     html_items = ""
-    for n, nombre, k, color, conv in items:
-        html_items += ui.producto(n, nombre, e.get(f"{k}_real"), e.get(f"{k}_meta"), e.get(f"{k}_falta"),
-                                  e.get(f"{k}_cump"), e.get(conv) if conv else None, color)
-    md(html_items)
+    for n, nombre, k, color, conv, extra in items:
+        extra_txt = f"<b>Peso porta:</b> {pct(row.get(extra), 1)}" if extra else ""
+        html_items += ui.producto(n, nombre, row.get(f"{k}_real"), row.get(f"{k}_meta"), row.get(f"{k}_falta"),
+                                  row.get(f"{k}_cump"), row.get(conv) if conv else None, color, extra_txt)
+    md(f'<div class="prod-grid g7">{html_items}</div>')
 
 
-def bloque_bonos(e: pd.Series, jornada: str):
-    bf, bp, bw = M.bono_foco(e, jornada), M.bono_porta(e, jornada), M.bono_winner(e, jornada)
-    tipo = "FULL" if jornada == "FT" else "PART TIME"
-    cuerpo = '<div class="sec t-morado">💰 BONOS DEL EJECUTIVO</div>'
-    cuerpo += ('<div class="card morado"><div class="sec" style="font-size:1.2rem">📲 BONO PORTABILIDAD</div>'
+def bloque_bonos(row, jornada: str):
+    bf, bp, bw = M.bono_foco(row, jornada), M.bono_porta(row, jornada), M.bono_winner(row, jornada)
+    tipo = "FULL" if jornada == "FT" else "PT"
+    est_bf = '<span class="t-verde">✅ GANA</span>' if bf["gana"] else '<span class="t-rojo">❌ NO GANA</span>'
+    est_bw = '<span class="t-verde">✅ GANA</span>' if bw["gana"] else '<span class="t-rojo">❌ NO GANA</span>'
+    cuerpo = '<div class="sec t-morado" style="font-size:1.3rem">💰 BONOS DEL EJECUTIVO</div><div class="grid g3" style="margin-top:.5rem">'
+    cuerpo += ('<div class="card morado" style="margin:0"><div class="sec" style="font-size:1.1rem">📲 BONO PORTABILIDAD</div>'
                + grid([celda("Meta bono", entero(bp["meta"])), celda("Lleva", entero(bp["real"])),
-                       celda("Cumplimiento", pct(bp["cump"], 1)),
-                       celda("Bono ganado", pesos(bp["monto"]), color="t-verde" if bp["gana"] else "t-verde")], 4)
-               + f'<div class="sub" style="margin-top:.4rem"><b>Tipo:</b> <span class="t-verde">{tipo}</span> · <b>Regla:</b> FULL {pesos(cfg.BONO_PORTA["FULL"])} / PT {pesos(cfg.BONO_PORTA["PT"])} al cumplir meta.</div></div>')
-    estado_bf = '<span class="t-verde">✅ GANA</span>' if bf["gana"] else '<span class="t-rojo">❌ NO GANA</span>'
-    cuerpo += ('<div class="card morado"><div class="sec" style="font-size:1.2rem">🎯 BONO FOCO</div>'
+                       celda("Cumplimiento", pct(bp["cump"], 1)), celda("Bono ganado", pesos(bp["monto"]), color="t-verde")], 4)
+               + f'<div class="sub" style="margin-top:.4rem;font-size:.75rem"><b>Tipo:</b> <span class="t-verde">{tipo}</span> · <b>Regla:</b> FULL {pesos(cfg.BONO_PORTA["FULL"])} / PT {pesos(cfg.BONO_PORTA["PT"])} al cumplir meta.</div></div>')
+    cuerpo += ('<div class="card morado" style="margin:0"><div class="sec" style="font-size:1.1rem">🎯 BONO FOCO</div>'
                + grid([celda("% Suscripción", pct(bf["cump_sus"], 1)), celda("% Fibra", pct(bf["cump_fib"], 1)),
-                       celda("% Bono foco", pct(bf["pct"])), celda("Estado", estado_bf)], 4) + '</div>')
-    estado_bw = '<span class="t-verde">✅ GANA</span>' if bw["gana"] else '<span class="t-rojo">❌ NO GANA</span>'
-    cuerpo += ('<div class="card morado"><div class="sec" style="font-size:1.2rem">🏆 BONO WINNER</div>'
+                       celda("% Bono foco", pct(bf["pct"])), celda("Estado", est_bf)], 4) + '</div>')
+    cuerpo += ('<div class="card morado" style="margin:0"><div class="sec" style="font-size:1.1rem">🏆 BONO WINNER</div>'
                + grid([celda("Att seguro", pct(bw["att_seg"], 1)), celda("Att ene./prot.", pct(bw["att_ene_prot"], 1)),
                        celda("Att TV full", pct(bw["att_tv"], 1)), celda("Cumplimiento", pct(bw["cump"], 1))], 4)
-               + f'<div class="sub" style="margin-top:.4rem">{estado_bw} · <b>Bono:</b> {pesos(bw["monto"])} · <b>Tipo:</b> <span class="t-verde">{tipo}</span></div></div>')
+               + f'<div class="sub" style="margin-top:.4rem;font-size:.75rem">{est_bw} · <b>Bono:</b> {pesos(bw["monto"])} · <b>Tipo:</b> <span class="t-verde">{tipo}</span></div></div>')
+    cuerpo += "</div>"
     ui.card(cuerpo, "morado")
     return {"foco": bf, "porta": bp, "winner": bw}
 
 
-def bloque_fibra(e: pd.Series):
+def bloque_fibra(row):
+    fp = v(row.get("factor_prod"))
     cuerpo = '<div class="sec">📶 FIBRA (REAL ENTEL)</div>' + grid([
-        celda("Q Validaciones", entero(e.get("q_valid")), f"% Validación {pct(e.get('pct_valid'))}<br>Incorrectas {pct(e.get('valid_inc'))}", True, "t-cyan"),
-        celda("Factibles", entero(e.get("factibles")), f"% Factibles {pct(e.get('pct_fact'))}", True, "t-cyan"),
-        celda("Conv. fibra", pct(e.get("conv_fibra")), "", True, "t-cyan"),
-        celda("Factor de prod.", pct(e.get("factor_prod")) if v(e.get("factor_prod")) <= 1 else f"{v(e.get('factor_prod')):.2f}", "", True, "t-cyan"),
-        celda("Tasa de instalación", pct(e.get("tasa_inst")), "", True, "t-cyan"),
-        celda("Fibra solicitudes", entero(e.get("fib_sol")), f"Pendientes: {entero(e.get('fib_pend'))}", True, "t-cyan"),
-    ], 2)
+        celda("Q Validaciones", entero(row.get("q_valid")), f"% Validación {pct(row.get('pct_valid'))}<br>Incorrectas {pct(row.get('valid_inc'))}", True),
+        celda("Factibles", entero(row.get("factibles")), f"% Factibles {pct(row.get('pct_fact'))}", True),
+        celda("Conv. fibra", pct(row.get("conv_fibra")), "", True),
+        celda("Factor de prod.", pct(fp) if fp <= 1 else f"{fp:.2f}", "", True),
+        celda("Tasa de instalación", pct(row.get("tasa_inst")), "", True),
+        celda("Fibra solicitudes", entero(row.get("fib_sol")), f"Pendientes: {entero(row.get('fib_pend'))}", True),
+    ], 6)
     ui.card(cuerpo, "cyan")
 
 
-def bloque_equipos(e: pd.Series):
-    cuerpo = '<div class="sec" style="text-align:center">📱 EQUIPOS</div>' + grid([
-        celda("Cumplimiento", pct(e.get("eq_cump"))), celda("Conv. equipos", pct(e.get("eq_conv"), 1)),
-        celda("Vendidos / meta", f"{entero(e.get('eq_q'))} / {entero(e.get('eq_meta_q'))}"),
-        celda("Q faltan", entero(v(e.get("eq_meta_q")) - v(e.get("eq_q")))),
-        celda("Att. eq–línea", pct(e.get("att_eq_linea"), 1)),
-    ], 5) + grid([
-        celda("Meta ($)", pesos(e.get("eq_meta"))), celda("Real ($)", pesos(e.get("eq_real"))),
-        celda("Falta ($)", pesos(e.get("eq_falta"))), celda("Deben llevar al corte ($)", pesos(e.get("eq_deben"))),
-    ], 2)
-    ui.card(cuerpo, "")
+def bloque_equipos_seguros_acc(row, avance: float):
+    a, b, c = st.columns(3)
+    with a:
+        ui.card('<div class="sec" style="text-align:center">📱 EQUIPOS</div>' + grid([
+            celda("Cumplimiento", pct(row.get("eq_cump"))), celda("Conv. equipos", pct(row.get("eq_conv"), 1)),
+            celda("Vendidos / meta", f"{entero(row.get('eq_q'))} / {entero(row.get('eq_meta_q'))}"),
+            celda("Q faltan", entero(v(row.get("eq_meta_q")) - v(row.get("eq_q")))),
+            celda("Att. eq–línea", pct(row.get("att_eq_linea"), 1)),
+        ], 5) + grid([
+            celda("Meta ($)", pesos(row.get("eq_meta"))), celda("Real ($)", pesos(row.get("eq_real"))),
+            celda("Falta ($)", pesos(row.get("eq_falta"))), celda("Deben llevar al corte ($)", pesos(deben(row, "eq_meta", avance))),
+        ], 2), "")
+    with b:
+        ui.card('<div class="sec" style="text-align:center">🛡️ SEGUROS</div>' + grid([
+            celda("Meta (Q)", entero(row.get("seg_meta"))), celda("Real (Q)", entero(row.get("seg_real"))),
+            celda("Falta (Q)", entero(row.get("seg_falta"))), celda("Deben llevar", str(M.ceil_pos(deben(row, "seg_meta", avance)))),
+        ], 4) + grid([celda("Cumplimiento", pct(row.get("seg_cump"))), celda("Attach", pct(row.get("att_seg"), 1))], 2), "morado")
+    with c:
+        ui.card('<div class="sec" style="text-align:center">👜 ACCESORIOS</div>' + grid([
+            celda("Meta ($)", pesos(row.get("acc_meta"))), celda("Real ($)", pesos(row.get("acc_real"))),
+            celda("Falta ($)", pesos(row.get("acc_falta"))), celda("Deben llevar ($)", pesos(deben(row, "acc_meta", avance))),
+        ], 2) + grid([
+            celda("Cumplimiento", pct(row.get("acc_cump"))), celda("Conv. acc", pct(row.get("acc_conv"), 1)),
+            celda("Q vendidos", f"{entero(row.get('acc_q'))}/{entero(row.get('acc_meta_q'))}"),
+        ], 3), "naranjo")
 
 
-def bloque_seguros(e: pd.Series):
-    cuerpo = '<div class="sec" style="text-align:center">🛡️ SEGUROS</div>' + grid([
-        celda("Meta (Q)", entero(e.get("seg_meta"))), celda("Real (Q)", entero(e.get("seg_real"))),
-        celda("Falta (Q)", entero(e.get("seg_falta"))), celda("Deben llevar", str(M.ceil_pos(e.get("seg_deben")))),
-    ], 4) + grid([celda("Cumplimiento", pct(e.get("seg_cump"))), celda("Attach", pct(e.get("att_seg"), 1))], 2)
-    ui.card(cuerpo, "morado")
+def bloque_ene_prot_epa(row):
+    a, b, c = st.columns(3)
+    with a:
+        ui.card('<div class="sec" style="text-align:center">⚡ ENERGÍA</div>' + grid([
+            celda("$ Energía", pesos(row.get("ene_usd"))), celda("Q Energía", entero(row.get("ene_q"))),
+            celda("Conv.", pct(row.get("ene_conv"))), celda("Attach", pct(row.get("ene_att"))),
+        ], 4), "amarillo")
+    with b:
+        ui.card('<div class="sec" style="text-align:center">🛡️ PROTECCIÓN</div>' + grid([
+            celda("$ Protección", pesos(row.get("prot_usd"))), celda("Q Protec.", entero(row.get("prot_q"))),
+            celda("Conv.", pct(row.get("prot_conv"))), celda("Attach", pct(row.get("prot_att"))),
+        ], 4), "rojo")
+    with c:
+        ui.card('<div class="sec" style="text-align:center">☑️ EPA <small>(EVALUACIÓN PLAN DE ACCIÓN)</small></div>' + grid([
+            celda("Meta EPA", pct(row.get("epa_meta"), 0), grande=True),
+            celda("EPA actual", pct(row.get("epa"), 1), grande=True, color=ui.color_cump(v(row.get("epa")) / v(row.get("epa_meta"), 1) if v(row.get("epa_meta")) else None)),
+        ], 2), "cyan")
 
 
-def bloque_accesorios(e: pd.Series):
-    cuerpo = '<div class="sec" style="text-align:center">👜 ACCESORIOS</div>' + grid([
-        celda("Meta ($)", pesos(e.get("acc_meta"))), celda("Real ($)", pesos(e.get("acc_real"))),
-        celda("Falta ($)", pesos(e.get("acc_falta"))), celda("Deben llevar ($)", pesos(e.get("acc_deben"))),
-    ], 2) + grid([
-        celda("Cumplimiento", pct(e.get("acc_cump"))), celda("Conv. acc.", pct(e.get("acc_conv"), 1)),
-        celda("Q vendidos / meta", f"{entero(e.get('acc_q'))} / {entero(e.get('acc_meta_q'))}"),
-    ], 3)
-    ui.card(cuerpo, "naranjo")
-
-
-def bloque_energia_proteccion(e: pd.Series):
-    ui.card('<div class="sec" style="text-align:center">⚡ ENERGÍA</div>' + grid([
-        celda("$ Energía", pesos(e.get("ene_usd"))), celda("Q Energía", entero(e.get("ene_q"))),
-        celda("Conv.", pct(e.get("ene_conv"))), celda("Attach", pct(e.get("ene_att"))),
-    ], 4), "amarillo")
-    ui.card('<div class="sec" style="text-align:center">🛡️ PROTECCIÓN</div>' + grid([
-        celda("$ Protección", pesos(e.get("prot_usd"))), celda("Q Protec.", entero(e.get("prot_q"))),
-        celda("Conv.", pct(e.get("prot_conv"))), celda("Attach", pct(e.get("prot_att"))),
-    ], 4), "rojo")
-
-
-def bloque_epa(e: pd.Series):
-    ui.card('<div class="sec" style="text-align:center">☑️ EPA <small>(EVALUACIÓN PLAN DE ACCIÓN)</small></div>' + grid([
-        celda("Meta EPA", pct(e.get("epa_meta"), 0), grande=True),
-        celda("EPA actual", pct(e.get("epa"), 1), grande=True, color=ui.color_cump(v(e.get("epa")) / v(e.get("epa_meta"), 1) if v(e.get("epa_meta")) else None)),
-    ], 2), "cyan")
-
-
-def bloque_escuchas(codigo: str, tienda: str, escuchas: pd.DataFrame | None):
-    ui.seccion("🎧", "ESCUCHAS")
-    if escuchas is None or escuchas.empty:
-        st.info("Carga el Excel **ESCUCHAS ENTEL** en *Gestión de archivos* para ver Latam Pass, Hogar, Fibra y Portabilidad.")
+def bloque_escuchas(clave: str, tienda: str, titulo: str = "ESCUCHAS"):
+    ui.seccion("🎧", titulo)
+    if esc is None or esc.empty:
+        st.info("Carga el Excel **ESCUCHAS ENTEL** en *Gestión de archivos* para ver Escuchas auditadas, Starlink, Latam Pass, Hogar, Fibra y Portabilidad.")
         return
-    fila = escuchas[escuchas["ejecutivo"] == codigo]
+    fila = esc[esc["ejecutivo"].str.upper() == clave.upper()]
     if fila.empty:
-        st.info("Este ejecutivo no tiene escuchas registradas.")
+        st.info("No hay escuchas registradas para esta selección.")
         return
     r = fila.iloc[0]
 
     def ref(nombre):
-        f = escuchas[escuchas["ejecutivo"].str.upper() == nombre.upper()]
-        return f.iloc[0] if not f.empty else None
+        f_ = esc[esc["ejecutivo"].str.upper() == str(nombre).upper()]
+        return f_.iloc[0] if not f_.empty else None
 
     t, canal, ctf = ref(tienda), ref("CANAL"), ref("CTF")
 
-    def refs(col):
+    def refs(col, fmt=lambda x: pct(x, 1)):
         partes = []
-        if t is not None:
-            partes.append(f"Tienda <span class='t-cyan'>{pct(t[col], 1)}</span>")
+        if t is not None and t is not r:
+            partes.append(f"Tienda <span class='t-cyan'>{fmt(t[col])}</span>")
         if canal is not None:
-            partes.append(f"Canal <span class='t-cyan'>{pct(canal[col], 1)}</span>")
+            partes.append(f"Canal <span class='t-cyan'>{fmt(canal[col])}</span>")
         if ctf is not None:
-            partes.append(f"CTF <span class='t-cyan'>{pct(ctf[col], 1)}</span>")
-        return " · ".join(partes)
+            partes.append(f"CTF <span class='t-cyan'>{fmt(ctf[col])}</span>")
+        return "<br>".join(partes)
 
-    a, b = st.columns(2)
-    with a:
-        ui.card(f'<div class="h">✈️ LATAM PASS</div><div class="big t-verde">{pct(r["latam_pass"], 1)}</div><div class="hr"></div><div class="sub">{refs("latam_pass")}</div>', "cyan")
+    cols = st.columns(6)
+    with cols[0]:
+        ui.card(f'<div class="h">🎧 ESCUCHAS AUDITADAS</div><div class="big t-verde">{entero(r["auditadas"])}</div><div class="sub">{refs("auditadas", entero)}</div>', "cyan")
+    with cols[1]:
+        ui.card(f'<div class="h">🛰️ STARLINK</div><div class="big t-verde">{pct(r["starlink"], 1)}</div><div class="sub">{refs("starlink")}</div>', "cyan")
+    with cols[2]:
+        ui.card(f'<div class="h">✈️ LATAM PASS</div><div class="big t-verde">{pct(r["latam_pass"], 1)}</div><div class="sub">{refs("latam_pass")}</div>', "cyan")
+    with cols[3]:
+        ui.card(f'<div class="h">🏠 HOGAR</div><div class="big t-verde">{pct(r["hogar"], 1)}</div><div class="sub">{refs("hogar")}</div>', "cyan")
+    with cols[4]:
         ui.card('<div class="h">📡 FIBRA</div>' + grid([celda("Calidad", pct(r["fibra_calidad"], 1), color="t-amarillo"), celda("Estabilidad", pct(r["fibra_estabilidad"], 1), color="t-amarillo")], 2)
-                + f'<div class="sub" style="margin-top:.4rem">{refs("fibra_calidad")}</div>', "cyan")
-    with b:
-        ui.card(f'<div class="h">🏠 HOGAR</div><div class="big t-verde">{pct(r["hogar"], 1)}</div><div class="hr"></div><div class="sub">{refs("hogar")}</div>', "cyan")
+                + f'<div class="sub" style="margin-top:.3rem;font-size:.72rem">{refs("fibra_calidad")}</div>', "cyan")
+    with cols[5]:
         ui.card('<div class="h">📲 PORTABILIDAD</div>' + grid([celda("Motivo", pct(r["porta_motivo"], 1), color="t-amarillo"), celda("Objeciones", pct(r["porta_objeciones"], 1), color="t-amarillo"), celda("Urgencia", pct(r["porta_urgencia"], 1), color="t-amarillo")], 3)
-                + f'<div class="sub" style="margin-top:.4rem">{refs("porta_motivo")}</div>', "cyan")
+                + f'<div class="sub" style="margin-top:.3rem;font-size:.72rem">{refs("porta_motivo")}</div>', "cyan")
 
 
-def bloque_epa_encuestas(codigo: str, mov_datos):
+def bloque_epa_encuestas(codigo: str):
     ui.seccion("🗣️", "EPA Y ENCUESTAS DEL EJECUTIVO")
-    epa_row = mov_datos.epa_ejecutivo[mov_datos.epa_ejecutivo["ejecutivo"] == codigo]
-    enc = mov_datos.encuestas[mov_datos.encuestas["ejecutivo"] == codigo] if not mov_datos.encuestas.empty else pd.DataFrame()
+    epa_row = mov.epa_ejecutivo[mov.epa_ejecutivo["ejecutivo"] == codigo]
+    enc = mov.encuestas[mov.encuestas["ejecutivo"] == codigo] if not mov.encuestas.empty else pd.DataFrame()
     epa_val = epa_row.iloc[0]["epa"] if not epa_row.empty else None
     q_total = int(v(epa_row.iloc[0]["q_total"])) if not epa_row.empty else 0
     n_enc = len(enc) if not enc.empty else q_total
-    por_rec = int((enc["nota"] <= 0).sum()) if not enc.empty and "nota" in enc else 0
-    a, b, c = st.columns(3)
+    positivas = int((enc["nota"] >= 1).sum()) if not enc.empty else 0
+    por_rec = int((enc["nota"] <= 0).sum()) if not enc.empty else 0
+    a, b, c, d = st.columns(4)
     with a:
         ui.kpi("EPA actual", pct(epa_val, 1, "—") if q_total else "—", "Fuente: hoja EPA", "t-verde" if q_total else "", "", "🎯")
     with b:
-        ui.kpi("Encuestas", str(n_enc), "Registradas en el periodo", "", "", "📝")
+        ui.kpi("Encuestas", str(n_enc), "Respuestas registradas", "", "", "📝")
     with c:
+        ui.kpi("Positivas", str(positivas), "Nota igual a 1", "t-verde", "", "✅")
+    with d:
         ui.kpi("Por recuperar", str(por_rec), "Notas 0 y -1", "", "", "⚠️")
     if enc.empty:
         st.info("Este ejecutivo no tiene encuestas detalladas registradas en BASE EPA.")
     else:
-        cols = [c for c in ("fecha", "nota", "tipo_atencion", "literal") if c in enc.columns]
+        cols = [c_ for c_ in ("fecha", "nota", "tipo_atencion", "literal") if c_ in enc.columns]
         st.dataframe(enc[cols].sort_values("fecha", ascending=False), use_container_width=True, hide_index=True)
 
 
-def bloque_prioridades(e: pd.Series, mov_datos, titulo="3 PRIORIDADES DEL CORTE"):
-    lista = M.alertas(e, mov_datos.estandares, mov_datos.avance_esperado)
+def bloque_prioridades(row, titulo="3 PRIORIDADES DEL CORTE"):
+    lista = M.alertas(row, mov.estandares, mov.avance_esperado)
     prios = M.prioridades(lista, 3)
     focos = len({a["foco"] for a in lista})
     cuerpo = f'<div class="sec">🎯 {titulo}</div><div class="sub" style="text-align:left;color:#fda4af"><b>{len(lista)} alertas consolidadas en {focos} focos. Trabaja primero estas tres prioridades.</b></div>'
+    cuerpo += '<div class="grid g3" style="margin-top:.5rem">'
     for i, p in enumerate(prios, 1):
-        cuerpo += f'<div class="prio"><div class="k">PRIORIDAD {i}</div><div class="f">{h(p["foco"])}</div><div class="d">{h(p["texto"])}</div></div>'
+        cuerpo += f'<div class="prio" style="margin:0"><div class="k">PRIORIDAD {i}</div><div class="f">{h(p["foco"])}</div><div class="d">{h(p["texto"])}</div></div>'
+    cuerpo += "</div>"
     if not prios:
         cuerpo += '<div class="sub t-verde">Sin alertas: todos los KPI están sobre el corte y el estándar.</div>'
     ui.card(cuerpo, "rosa")
@@ -294,143 +370,185 @@ def bloque_prioridades(e: pd.Series, mov_datos, titulo="3 PRIORIDADES DEL CORTE"
 
 
 # ===========================================================================
+# TABLAS DE LA VISTA TIENDAS / CTF
+# ===========================================================================
+def semaforo(valor, clave: str) -> str:
+    u = mov.umbrales.get(clave)
+    if u is None:
+        return ""
+    x = v(valor)
+    if x >= u["meta"]:
+        return "sem-v"
+    if x >= u["amarillo"]:
+        return "sem-a"
+    return "sem-r"
+
+
+def tabla_bono_winner(ej: pd.DataFrame):
+    ui.seccion("🏆", "CUMPLIMIENTOS DE EJECUTIVOS · BONO WINNER")
+    md('<div class="card" style="padding:.5rem 1rem;font-size:.85rem"><b>Metas Winner:</b> Attach Seguro 32% · Energía/Protección 34% · TV Full 45% · Pago según el resultado oficial del Drive.</div>')
+    filas = []
+    for _, r in ej.sort_values(["tienda", "ejecutivo"]).iterrows():
+        j = M.jornada_de(r["ejecutivo"], mov.jornadas)
+        bw = M.bono_winner(r, j)
+        filas.append([h(r["ejecutivo"]), h(r["tienda"]), "FULL" if j == "FT" else "PT",
+                      pct(bw["att_seg"], 1), pct(bw["att_ene_prot"], 1), pct(bw["att_tv"], 1), pct(bw["cump"], 1),
+                      f'<span class="{"t-verde" if bw["gana"] else "t-rojo"}">{"GANA" if bw["gana"] else "NO GANA"}</span>',
+                      f'<span class="{"t-verde" if bw["gana"] else "t-rojo"}">{pesos(bw["monto"])}</span>'])
+    ui.card(ui.tabla(["Ejecutivo", "Tienda", "Tipo", "Att seguro", "Att ene./prot.", "Att TV full", "Cumplimiento", "Estado", "Bono"], filas, izq=2), "cyan")
+
+
+KPIS_CUMP = [("Total móvil", "mov_cump"), ("Suscripción", "sus_cump"), ("1ra línea", "l1_cump"), ("2da línea", "l2_cump"),
+             ("Porta", "porta_cump"), ("Fibra", "fib_cump"), ("Equipos", "eq_cump"), ("Seguros", "seg_cump"), ("Accesorios", "acc_cump")]
+
+
+def tabla_cumplimientos(ej: pd.DataFrame, avance: float):
+    u = mov.umbrales.get("mov_cump", {"meta": mov.avance_esperado, "amarillo": 0.075})
+    md(f'<div class="card" style="padding:.6rem 1.1rem;display:flex;justify-content:space-between;align-items:center">'
+       f'<span class="sec">👥 CUMPLIMIENTOS DE EJECUTIVOS</span><span class="pill">📍 AVANCE ESPERADO: {pct(avance, 1)}</span></div>')
+    md(f'<div class="card" style="padding:.45rem 1rem;font-size:.8rem"><span class="tag sem-v">VERDE ≥ {pct(u["meta"], 1)}</span> '
+       f'<span class="tag sem-a">AMARILLO {pct(u["amarillo"], 1)} a {pct(u["meta"], 1)}</span> <span class="tag sem-r">ROJO &lt; {pct(u["amarillo"], 1)}</span>'
+       f' · Cada resumen suma exactamente los {len(KPIS_CUMP)} KPI visibles.</div>')
+    filas = []
+    for _, r in ej.sort_values("ejecutivo").iterrows():
+        celdas = []
+        cnt = {"sem-v": 0, "sem-a": 0, "sem-r": 0}
+        for _, k in KPIS_CUMP:
+            cls = semaforo(r.get(k), k)
+            cnt[cls] = cnt.get(cls, 0) + 1
+            celdas.append(f'<span class="celda-sem {cls}">{pct(r.get(k), 1)}</span>')
+        resumen = (f'<span class="tag sem-v">V{cnt["sem-v"]}</span> <span class="tag sem-a">A{cnt["sem-a"]}</span> '
+                   f'<span class="tag sem-r">R{cnt["sem-r"]}</span> <span class="tag sem-t">T{len(KPIS_CUMP)}</span>')
+        filas.append([h(r["ejecutivo"]), h(mov.nombres.get(r["ejecutivo"], "")), entero(r["atenciones"])] + celdas + [resumen])
+    ui.card(ui.tabla(["Ejecutivo", "Nombre", "Atenc."] + [n for n, _ in KPIS_CUMP] + ["Resumen"], filas, izq=2), "cyan")
+
+
+KPIS_GESTION = [("Conv. móvil", "mov_conv"), ("Conv. sus", "sus_conv"), ("Conv. porta", "porta_conv"), ("Peso porta", "porta_peso"),
+                ("CVM 50%", "cvm_50"), ("Conv. fibra", "conv_fibra"), ("Tasa inst.", "tasa_inst"), ("% Validac.", "pct_valid"),
+                ("% Fact.", "pct_fact"), ("Conv. equipos", "eq_conv"), ("Att eq-línea", "att_eq_linea"), ("Att seguro", "att_seg"),
+                ("Conv. acc", "acc_conv"), ("Att energía", "ene_att"), ("Att protec.", "prot_att"), ("EPA", "epa")]
+
+
+def tabla_gestion(ej: pd.DataFrame):
+    ui.seccion("🎯", "GESTIÓN DE EJECUTIVOS")
+    md('<div class="card" style="padding:.45rem 1rem;font-size:.8rem"><span class="tag sem-v">VERDE = META / ESTÁNDAR</span> '
+       '<span class="tag sem-a">AMARILLO = RANGO INTERMEDIO</span> <span class="tag sem-r">ROJO = BAJO MÍNIMO</span> · Umbrales tomados directamente de la hoja CONV-CUMP del Excel.</div>')
+    cabecera = ["Ejecutivo", "Nombre", "Atenc."]
+    for n, k in KPIS_GESTION:
+        u = mov.umbrales.get(k)
+        cabecera.append(f'{n}<br><span class="t-cyan">META {pct(u["meta"], 1) if u else "—"}</span>')
+    filas = []
+    for _, r in ej.sort_values("ejecutivo").iterrows():
+        celdas = [f'<span class="celda-sem {semaforo(r.get(k), k)}">{pct(r.get(k), 1)}</span>' for _, k in KPIS_GESTION]
+        filas.append([h(r["ejecutivo"]), h(mov.nombres.get(r["ejecutivo"], "")), entero(r["atenciones"])] + celdas)
+    ui.card(ui.tabla(cabecera, filas, izq=2, escapar_cabecera=False), "cyan")
+
+
+def tabla_ranking(ej: pd.DataFrame):
+    ui.seccion("🏆", "RANKING CTF DE EJECUTIVOS")
+    rk = ej.sort_values(["atenciones", "proy_pond"], ascending=[False, False])
+    filas = []
+    for i, (_, r) in enumerate(rk.iterrows(), 1):
+        f = M.ficha(r, mov.pesos)
+        col = "t-rojo" if f["proy"] < 0.8 else ("t-amarillo" if f["proy"] < 1 else "t-verde")
+        filas.append([str(i), h(r["ejecutivo"]), h(mov.nombres.get(r["ejecutivo"], "")), h(r["tienda"]), entero(r["atenciones"]),
+                      f'<span class="{col}">{pct(f["proy"])}</span>', f'<span class="{col}">TRAMO {f["tramo_proy"]}</span>',
+                      f'<span class="{col}">{f["etiqueta_proy"]}</span>'])
+    ui.card(ui.tabla(["#", "Ejecutivo", "Nombre", "Tienda", "Atenc.", "% Proyección", "Tramo", "Estado"], filas, izq=4), "cyan")
+
+
+# ===========================================================================
 # VISTA 1 · EJECUTIVO
 # ===========================================================================
 def vista_ejecutivo():
-    pdv = st.selectbox("🏬 Tienda", list(etiqueta_tienda.keys()), format_func=lambda p: etiqueta_tienda[p])
+    s1, s2 = st.columns(2)
+    with s1:
+        pdv = st.selectbox("🏬 Tienda", list(etiqueta_tienda.keys()), format_func=lambda p: etiqueta_tienda[p])
     ej_tienda = ejecutivos[ejecutivos["pdv"] == pdv]
     if ej_tienda.empty:
         st.warning("Esta tienda no tiene ejecutivos activos en MOV-FIBRA.")
         return
-    codigo = st.selectbox("👤 Ejecutivo", list(ej_tienda["ejecutivo"]))
+    with s2:
+        codigo = st.selectbox("👤 Ejecutivo", list(ej_tienda["ejecutivo"]))
     e = ej_tienda[ej_tienda["ejecutivo"] == codigo].iloc[0]
     tienda = nombre_tienda.get(pdv, "")
     nombre = mov.nombres.get(codigo, "")
     jornada = M.jornada_de(codigo, mov.jornadas)
     f = M.ficha(e, mov.pesos)
+    avance = avance_calendario(e)
 
-    # --- ficha PDF (se calcula antes para mostrar el botón arriba) ----------
     bonos = {"foco": M.bono_foco(e, jornada), "porta": M.bono_porta(e, jornada), "winner": M.bono_winner(e, jornada)}
     prios = M.prioridades(M.alertas(e, mov.estandares, mov.avance_esperado), 3)
-    try:
-        from kpi.pdf import ficha_pdf
-        pdf_bytes = ficha_pdf(e.to_dict(), nombre, tienda, mov.fecha_corte, f, bonos, prios)
-        st.download_button("📥 Descargar ficha PDF", pdf_bytes,
-                           file_name=f"ficha_{codigo}_{fecha_txt(mov.fecha_corte).replace('/', '-')}.pdf", mime="application/pdf")
-    except Exception as ex:  # noqa: BLE001
-        st.caption(f"PDF no disponible: {ex}")
+    with _slot_pdf:
+        try:
+            from kpi.pdf import ficha_pdf
+            pdf_bytes = ficha_pdf(e.to_dict(), nombre, tienda, mov.fecha_corte, f, bonos, prios)
+            st.download_button("📥 Descargar ficha PDF", pdf_bytes, use_container_width=True,
+                               file_name=f"ficha_{codigo}_{fecha_txt(mov.fecha_corte).replace('/', '-')}.pdf", mime="application/pdf")
+        except Exception as ex:  # noqa: BLE001
+            st.caption(f"PDF no disponible: {ex}")
 
     md(f'<div class="card" style="padding:.6rem 1rem">Tienda: <b>{h(tienda)}</b> · Ejecutivos en esta tienda: <b>{len(ej_tienda)}</b></div>')
 
-    # --- encabezado -------------------------------------------------------
-    c1, c2 = st.columns([1, 2.3])
-    with c1:
-        ui.card(f'<div class="mid">🏬 PDV {h(pdv)}</div><div class="sub t-cyan" style="font-weight:800;font-size:1rem">{h(tienda)}</div>'
-                f'<div class="hr"></div><div class="h t-cyan">📅 CORTE</div><div class="mid">{fecha_txt(mov.fecha_corte)}</div>', "cyan")
-    with c2:
-        ui.card('<div class="h">EJECUTIVO SELECCIONADO</div>'
-                f'<div class="big t-cyan" style="font-size:2.4rem">{h(codigo)}</div>'
-                + grid([mini("👤 Nombre", h(nombre or "Por completar")), mini("⏳ Antigüedad", "Por completar"),
-                        mini("🕒 Jornada", jornada), mini("🎂 Cumpleaños", "Por completar")], 4), "")
-        rf = M.resumen_fibra_ejecutivo(fib.solicitudes if fib else None, codigo, mov.fecha_corte)
-        if rf["ultima"]:
-            cuando = "Hoy" if rf["hoy"] else (f"Hace {rf['dias']} días" if rf["dias"] is not None else "")
-            ui.card(f'<div class="h t-cyan">ÚLTIMA SOLICITUD DE FIBRA</div><div class="mid t-verde">📅 {fecha_txt(rf["ultima"])}</div>'
-                    f'<div class="sub">{cuando} · {rf["periodo"]} solicitudes en el periodo</div>', "cyan")
-        else:
-            ui.card('<div class="h t-cyan">ÚLTIMA SOLICITUD DE FIBRA</div><div class="mid t-rojo">Sin solicitudes</div>'
-                    '<div class="sub">0 solicitudes en el periodo</div>', "cyan")
+    minis = [mini("👤 Nombre", h(nombre or "Por completar")), mini("⏳ Antigüedad", "Por completar"),
+             mini("🕒 Jornada", jornada), mini("🎂 Cumpleaños", "Por completar")]
+    rf = M.resumen_fibra_ejecutivo(fib.solicitudes if fib else None, codigo, mov.fecha_corte)
+    bloque_cabecera(e, f"PDV {pdv}", tienda, "EJECUTIVO SELECCIONADO", codigo, minis, "", f, rf)
 
-    # --- fila de KPIs principales -----------------------------------------
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    with k1:
-        ui.kpi("% Real a la fecha", pct(f["cump"]), f'<b class="t-amarillo" style="font-size:1.2rem">TRAMO {f["tramo"]}</b><br><b class="t-amarillo">{f["etiqueta"]}</b>', "t-amarillo", "amarillo")
-    with k2:
-        ui.kpi("% Proyección", pct(f["proy"]), f'<b class="t-verde" style="font-size:1.2rem">TRAMO {f["tramo_proy"]}</b><br><b class="t-verde">{f["etiqueta_proy"]}</b>', "t-verde", "verde")
-    with k3:
-        prom = ej_tienda.loc[ej_tienda["ejecutivo"] != codigo, "atenciones"]
-        prom_full = prom.mean() if not prom.empty else 0
-        dif = v(e["atenciones"]) - prom_full
-        ui.kpi("Atenciones", entero(e["atenciones"]), f"Prom. pares FULL: {entero(prom_full)} · <b class='{'t-verde' if dif >= 0 else 't-rojo'}'>{'+' if dif >= 0 else ''}{entero(dif)}</b>", "", "", "👤")
-    with k4:
-        ui.kpi("Días restantes", entero(e["dias_rest"]), "", "", "", "📅")
-    with k5:
-        ui.kpi("Meta EPA", pct(e["epa_meta"], 0), "", "", "", "🎯")
-    with k6:
-        ui.kpi("EPA actual", pct(e["epa"], 1), "", ui.color_cump(v(e["epa"]) / v(e["epa_meta"], 1) if v(e["epa_meta"]) else None), "")
-
-    # --- movilidad -----------------------------------------------------------
-    bloque_movilidad(e, mov.avance_esperado)
+    prom = ej_tienda.loc[ej_tienda["ejecutivo"] != codigo, "atenciones"]
+    bloque_indicadores(e, f, prom.mean() if not prom.empty else 0)
+    bloque_movilidad(e, avance)
     bloque_bonos(e, jornada)
     bloque_fibra(e)
-    bloque_equipos(e)
-    bloque_seguros(e)
-    bloque_accesorios(e)
-    bloque_energia_proteccion(e)
-    bloque_epa(e)
-    bloque_escuchas(codigo, tienda, esc)
-    bloque_epa_encuestas(codigo, mov)
-    bloque_prioridades(e, mov)
-
-    md(f'<div class="foot">Archivo cargado: {h(mov.archivo)} · Vista: Ejecutivo · {h(tienda)} · Ejecutivos: {len(ej_tienda)}</div>')
+    bloque_equipos_seguros_acc(e, avance)
+    bloque_ene_prot_epa(e)
+    bloque_escuchas(codigo, tienda)
+    bloque_epa_encuestas(codigo)
+    bloque_prioridades(e)
+    md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Ejecutivo · {h(tienda)} · Ejecutivos: {len(ej_tienda)}</div>')
 
 
 # ===========================================================================
 # VISTA 2 · TIENDAS / CTF
 # ===========================================================================
-def fila_resumen(r, nombre) -> list[str]:
-    return [h(nombre), entero(r.get("atenciones")),
-            f"{entero(r.get('mov_real'))} / {entero(r.get('mov_meta'))}", f'<span class="{ui.color_cump(v(r.get("mov_cump")) / max(mov.avance_esperado, 1e-9))}">{pct(r.get("mov_cump"))}</span>',
-            pct(r.get("mov_conv"), 1), f"{entero(r.get('porta_real'))} / {entero(r.get('porta_meta'))}",
-            f"{entero(r.get('fib_real'))} / {entero(r.get('fib_meta'))}", pct(r.get("fib_cump")),
-            pct(r.get("eq_cump")), pct(r.get("seg_cump")), pct(r.get("acc_cump")), pct(r.get("epa"), 0)]
-
-
-COLS_RESUMEN = ["Tienda / Ejecutivo", "Atenc.", "Móvil real/meta", "Cump. móvil", "Conv. móvil", "Porta", "Fibra", "Cump. fibra",
-                "Cump. equipos", "Cump. seguros", "Cump. acc.", "EPA"]
-
-
 def vista_tiendas():
-    tot = mov.total
-    md(f'<span class="pill">📍 AVANCE ESPERADO: {pct(mov.avance_esperado, 1)}</span>')
-    k = st.columns(6)
-    with k[0]:
-        ui.kpi("Atenciones CTF", entero(tot.get("atenciones")), "", "", "cyan", "👥")
-    with k[1]:
-        ui.kpi("Móvil CTF", f"{entero(tot.get('mov_real'))} <span class='t-gris' style='font-size:1.1rem'>de {entero(tot.get('mov_meta'))}</span>", f"Cump. {pct(tot.get('mov_cump'))} · Conv. {pct(tot.get('mov_conv'), 1)}", "", "cyan")
-    with k[2]:
-        ui.kpi("Portabilidad", f"{entero(tot.get('porta_real'))} <span class='t-gris' style='font-size:1.1rem'>de {entero(tot.get('porta_meta'))}</span>", f"Cump. {pct(tot.get('porta_cump'))}", "", "verde")
-    with k[3]:
-        ui.kpi("Fibra", f"{entero(tot.get('fib_real'))} <span class='t-gris' style='font-size:1.1rem'>de {entero(tot.get('fib_meta'))}</span>", f"Cump. {pct(tot.get('fib_cump'))} · Conv. {pct(tot.get('conv_fibra'), 1)}", "", "cyan")
-    with k[4]:
-        ui.kpi("$ Equipos", pesos(tot.get("eq_real")), f"Meta {pesos(tot.get('eq_meta'))} · {pct(tot.get('eq_cump'))}", "", "")
-    with k[5]:
-        ui.kpi("$ Accesorios", pesos(tot.get("acc_real")), f"Meta {pesos(tot.get('acc_meta'))} · {pct(tot.get('acc_cump'))}", "", "naranjo")
+    opciones = ["CTF"] + list(etiqueta_tienda.keys())
+    etiquetas = {"CTF": "CTF EMPRESA TOTAL · CTF TECNOLOGIA SPA", **etiqueta_tienda}
+    sel = st.selectbox("🏬 Seleccionar tienda / empresa", opciones, format_func=lambda p: etiquetas[p])
 
-    ui.seccion("🏬", "RESUMEN POR TIENDA", f"corte {fecha_txt(mov.fecha_corte)}")
-    filas = [fila_resumen(r, r["tienda"]) for _, r in tiendas.iterrows()]
-    total = fila_resumen(tot, "TOTAL CTF") if tot else None
-    ui.card(ui.tabla(COLS_RESUMEN, filas, total))
+    if sel == "CTF":
+        row = pd.Series(mov.total)
+        ej = ejecutivos
+        titulo, pdv_txt, sub_pdv, nombre_grande = "EMPRESA TOTAL", "PDV CTF", "CTF EMPRESA TOTAL", "CTF EMPRESA TOTAL"
+        escucha_clave = "CTF"
+    else:
+        row = tiendas[tiendas["pdv"] == sel].iloc[0]
+        ej = ejecutivos[ejecutivos["pdv"] == sel]
+        titulo, pdv_txt, sub_pdv, nombre_grande = "TIENDA", f"PDV {sel}", nombre_tienda[sel], nombre_tienda[sel]
+        escucha_clave = nombre_tienda[sel]
 
-    ui.seccion("📊", "CUMPLIMIENTO PONDERADO POR TIENDA", "promedio de la ficha de sus ejecutivos")
-    cols = st.columns(len(tiendas)) if len(tiendas) <= 6 else st.columns(6)
-    for i, (_, t) in enumerate(tiendas.iterrows()):
-        ej = ejecutivos[ejecutivos["pdv"] == t["pdv"]]
-        prom = ej["cump_ficha"].mean() if not ej.empty else None
-        proy = ej["proy_pond"].mean() if not ej.empty else None
-        with cols[i % len(cols)]:
-            ui.kpi(t["tienda"], pct(prom), f"Proy. <b class='{ui.color_cump(proy)}'>{pct(proy)}</b> · {len(ej)} ejec.", ui.color_cump(prom), "")
+    # cumplimiento ponderado de la tienda / empresa = promedio de sus ejecutivos
+    f = {
+        "cump": ej["cump_ficha"].mean() if not ej.empty else 0.0,
+        "proy": ej["proy_pond"].mean() if not ej.empty else 0.0,
+    }
+    f["tramo"], f["tramo_proy"] = cfg.tramo_de(f["cump"]), cfg.tramo_de(f["proy"])
+    f["etiqueta"], f["etiqueta_proy"] = cfg.etiqueta_cumplimiento(f["cump"]), cfg.etiqueta_cumplimiento(f["proy"])
+    avance = avance_calendario(row)
 
-    ui.seccion("🏆", "RANKING DE EJECUTIVOS CTF", "por % real de la ficha")
-    rk = ejecutivos.sort_values("cump_ficha", ascending=False)
-    filas = []
-    for i, (_, r) in enumerate(rk.iterrows(), 1):
-        f = M.ficha(r, mov.pesos)
-        filas.append([str(i), h(r["ejecutivo"]), h(r["tienda"]), f'<span class="{ui.color_cump(f["cump"])}">{pct(f["cump"])}</span>',
-                      str(f["tramo"]), f'<span class="{ui.color_cump(f["proy"])}">{pct(f["proy"])}</span>', entero(r["atenciones"]),
-                      f"{entero(r['mov_real'])}/{entero(r['mov_meta'])}", f"{entero(r['fib_real'])}/{entero(r['fib_meta'])}", pct(r["epa"], 0)])
-    ui.card(ui.tabla(["#", "Ejecutivo", "Tienda", "% Real", "Tramo", "% Proy.", "Atenc.", "Móvil", "Fibra", "EPA"], filas, izq=3))
-    md(f'<div class="foot">Archivo cargado: {h(mov.archivo)} · Vista: Tiendas / CTF</div>')
+    md(f'<div class="card" style="padding:.6rem 1rem">Vista: <b>{h(nombre_grande)}</b> · Ejecutivos: <b>{len(ej)}</b> · Corte: <b>{fecha_txt(mov.fecha_corte)}</b></div>')
+    bloque_cabecera(row, pdv_txt, sub_pdv, titulo, nombre_grande, None, "¡Vamos por más! Cada venta cuenta.", f, None)
+    bloque_indicadores(row, f, None)
+    bloque_movilidad(row, avance)
+    bloque_fibra(row)
+    bloque_equipos_seguros_acc(row, avance)
+    bloque_ene_prot_epa(row)
+    tabla_bono_winner(ej)
+    tabla_cumplimientos(ej, avance)
+    tabla_gestion(ej)
+    tabla_ranking(ej)
+    bloque_escuchas(escucha_clave, escucha_clave, f"ESCUCHAS · {nombre_grande}")
+    md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Tiendas / CTF · {h(nombre_grande)}</div>')
 
 
 # ===========================================================================
@@ -441,32 +559,9 @@ def vista_jefe():
     t = tiendas[tiendas["pdv"] == pdv].iloc[0]
     ej = ejecutivos[ejecutivos["pdv"] == pdv]
     tienda = t["tienda"]
+    avance = avance_calendario(t)
 
     md(f'<div class="card" style="padding:.6rem 1rem">Tienda: <b>{h(tienda)}</b> · PDV {h(pdv)} · Ejecutivos activos: <b>{len(ej)}</b> · Corte: <b>{fecha_txt(mov.fecha_corte)}</b></div>')
-    k = st.columns(6)
-    with k[0]:
-        ui.kpi("Atenciones", entero(t["atenciones"]), f"Días restantes: {entero(t['dias_rest'])}", "", "cyan", "👥")
-    with k[1]:
-        ui.kpi("% Real ficha (prom.)", pct(ej["cump_ficha"].mean() if not ej.empty else None), "", ui.color_cump(ej["cump_ficha"].mean() if not ej.empty else None), "amarillo")
-    with k[2]:
-        ui.kpi("% Proyección (prom.)", pct(ej["proy_pond"].mean() if not ej.empty else None), "", ui.color_cump(ej["proy_pond"].mean() if not ej.empty else None), "verde")
-    with k[3]:
-        ui.kpi("Móvil", f"{entero(t['mov_real'])} <span class='t-gris' style='font-size:1.1rem'>de {entero(t['mov_meta'])}</span>", f"Deben llevar {M.ceil_pos(t['mov_deben'])} · Cump. {pct(t['mov_cump'])}", "", "")
-    with k[4]:
-        ui.kpi("Fibra", f"{entero(t['fib_real'])} <span class='t-gris' style='font-size:1.1rem'>de {entero(t['fib_meta'])}</span>", f"Deben llevar {M.ceil_pos(t['fib_deben'])} · Conv. {pct(t['conv_fibra'], 1)}", "", "cyan")
-    with k[5]:
-        ui.kpi("EPA tienda", pct(t["epa"], 1), f"Meta {pct(t['epa_meta'], 0)}", ui.color_cump(v(t["epa"]) / v(t["epa_meta"], 1) if v(t["epa_meta"]) else None), "")
-
-    bloque_movilidad(t, mov.avance_esperado)
-    c1, c2 = st.columns(2)
-    with c1:
-        bloque_equipos(t)
-        bloque_accesorios(t)
-    with c2:
-        bloque_seguros(t)
-        bloque_fibra(t)
-    bloque_energia_proteccion(t)
-
     ui.seccion("👥", "EJECUTIVOS DE LA TIENDA", "semáforo del corte")
     filas = []
     for _, r in ej.sort_values("cump_ficha", ascending=False).iterrows():
@@ -475,15 +570,15 @@ def vista_jefe():
         filas.append([h(r["ejecutivo"]), h(mov.nombres.get(r["ejecutivo"], "")), entero(r["atenciones"]),
                       f'<span class="{ui.color_cump(f["cump"])}">{pct(f["cump"])}</span>', str(f["tramo"]),
                       f'<span class="{ui.color_cump(f["proy"])}">{pct(f["proy"])}</span>',
-                      f"{entero(r['mov_real'])}/{M.ceil_pos(r['mov_deben'])}", f"{entero(r['porta_real'])}/{M.ceil_pos(r['porta_deben'])}",
-                      f"{entero(r['fib_real'])}/{M.ceil_pos(r['fib_deben'])}", f"{entero(r['seg_real'])}/{M.ceil_pos(r['seg_deben'])}",
+                      f"{entero(r['mov_real'])}/{M.ceil_pos(deben(r, 'mov_meta', avance))}", f"{entero(r['porta_real'])}/{M.ceil_pos(deben(r, 'porta_meta', avance))}",
+                      f"{entero(r['fib_real'])}/{M.ceil_pos(deben(r, 'fib_meta', avance))}", f"{entero(r['seg_real'])}/{M.ceil_pos(deben(r, 'seg_meta', avance))}",
                       pct(r["eq_cump"]), pct(r["epa"], 0), f'<span class="{"t-rojo" if len(al) >= 8 else "t-amarillo" if len(al) >= 4 else "t-verde"}">{len(al)}</span>'])
-    ui.card(ui.tabla(["Ejecutivo", "Nombre", "Atenc.", "% Real", "Tramo", "% Proy.", "Móvil / corte", "Porta / corte", "Fibra / corte", "Seg. / corte", "Cump. eq.", "EPA", "Alertas"], filas, izq=2))
+    ui.card(ui.tabla(["Ejecutivo", "Nombre", "Atenc.", "% Real", "Tramo", "% Proy.", "Móvil / corte", "Porta / corte", "Fibra / corte", "Seg. / corte", "Cump. eq.", "EPA", "Alertas"], filas, izq=2), "cyan")
 
     ui.seccion("🎯", "PRIORIDADES POR EJECUTIVO")
-    cols = st.columns(2)
+    cols = st.columns(3)
     for i, (_, r) in enumerate(ej.iterrows()):
-        with cols[i % 2]:
+        with cols[i % 3]:
             prios = M.prioridades(M.alertas(r, mov.estandares, mov.avance_esperado), 3)
             cuerpo = f'<div class="sec" style="font-size:1.1rem">{h(r["ejecutivo"])}</div>'
             for j, p in enumerate(prios, 1):
@@ -491,7 +586,12 @@ def vista_jefe():
             if not prios:
                 cuerpo += '<div class="sub t-verde">Sin alertas.</div>'
             ui.card(cuerpo, "rosa")
-    md(f'<div class="foot">Archivo cargado: {h(mov.archivo)} · Vista: Jefe de tienda · {h(tienda)}</div>')
+
+    bloque_movilidad(t, avance)
+    bloque_fibra(t)
+    bloque_equipos_seguros_acc(t, avance)
+    bloque_ene_prot_epa(t)
+    md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Jefe de tienda · {h(tienda)}</div>')
 
 
 # ===========================================================================
@@ -505,7 +605,7 @@ def vista_fibra_tiendas():
     if fib is None:
         return _sin_fibra()
     res, sol = fib.resumen, fib.solicitudes
-    md(f'<div class="card cyan" style="padding:.6rem 1rem">📡 <b>FIBRA DRIVE</b> · última solicitud registrada: <b>{fecha_txt(fib.fecha_actualizacion)}</b> · Archivo: {h(fib.archivo)}</div>')
+    md(f'<div class="card cyan" style="padding:.6rem 1rem">📡 <b>FIBRA DRIVE</b> · última solicitud registrada: <b>{fecha_txt(fib.fecha_actualizacion)}</b></div>')
 
     tiendas_res = res[~res["es_ejecutivo"]].copy()
     tiendas_res = tiendas_res[tiendas_res["pdv"].isin(nombre_tienda.keys()) | tiendas_res["nombre"].str.contains("CTF", na=False)]
@@ -518,7 +618,7 @@ def vista_fibra_tiendas():
                       entero(r.get("meta_fibra")), entero(r.get("real_fibra")), f'<span class="{ui.color_cump(v(r.get("cump")) / max(mov.avance_esperado, 1e-9))}">{pct(r.get("cump"))}</span>',
                       entero(r.get("meta_tv")), entero(r.get("real_tv")), pct(r.get("att_tv"), 1)])
     ui.seccion("🏬", "RESUMEN FIBRA POR TIENDA", "hoja RESUMEN")
-    ui.card(ui.tabla(["Tienda", "Meta solic.", "Solic. OK", "Rechazos", "Meta fibra", "Real fibra", "% Cump.", "Meta TV", "Real TV", "Att TV"], filas))
+    ui.card(ui.tabla(["Tienda", "Meta solic.", "Solic. OK", "Rechazos", "Meta fibra", "Real fibra", "% Cump.", "Meta TV", "Real TV", "Att TV"], filas), "cyan")
 
     if not sol.empty:
         ui.seccion("📋", "ESTADO DE LAS SOLICITUDES", "hoja AVANCE FIBRAS")
@@ -529,12 +629,12 @@ def vista_fibra_tiendas():
         estatus_cols = list(piv.columns)
         filas = [[h(nombre_tienda.get(p, p))] + [entero(piv.loc[p, c]) for c in estatus_cols] + [entero(piv.loc[p].sum())] for p in piv.index]
         total = ["TOTAL"] + [entero(piv[c].sum()) for c in estatus_cols] + [entero(piv.values.sum())]
-        ui.card(ui.tabla(["Tienda"] + [c.title() for c in estatus_cols] + ["Total"], filas, total))
+        ui.card(ui.tabla(["Tienda"] + [c.title() for c in estatus_cols] + ["Total"], filas, total), "cyan")
 
         ui.seccion("📈", "SOLICITUDES POR DÍA", f"mes {mes or ''}")
         por_dia = sol_mes.dropna(subset=["fecha_solicitud"]).groupby("fecha_solicitud").size()
         if not por_dia.empty:
-            por_dia.index = [f.strftime("%d/%m") for f in por_dia.index]
+            por_dia.index = [f_.strftime("%d/%m") for f_ in por_dia.index]
             st.bar_chart(por_dia.rename("solicitudes"), color="#22d3ee")
     md('<div class="foot">Vista: Fibra tiendas</div>')
 
@@ -556,7 +656,7 @@ def vista_fibra_ejecutivos():
                       entero(r.get("real_fibra")), f'<span class="{ui.color_cump(v(r.get("cump")) / max(mov.avance_esperado, 1e-9))}">{pct(r.get("cump"))}</span>',
                       entero(r.get("meta_tv")), entero(r.get("real_tv")), pct(r.get("att_tv"), 1),
                       fecha_txt(rf["ultima"]), str(rf["periodo"])])
-    ui.card(ui.tabla(["Ejecutivo", "Solic. OK", "Rechazos", "Meta fibra", "Real fibra", "% Cump.", "Meta TV", "Real TV", "Att TV", "Última solicitud", "Solic. periodo"], filas))
+    ui.card(ui.tabla(["Ejecutivo", "Solic. OK", "Rechazos", "Meta fibra", "Real fibra", "% Cump.", "Meta TV", "Real TV", "Att TV", "Última solicitud", "Solic. periodo"], filas), "cyan")
 
     codigo = st.selectbox("👤 Ejecutivo", list(ej_res["nombre"]) if not ej_res.empty else [])
     if codigo and not sol.empty:

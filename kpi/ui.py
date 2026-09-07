@@ -21,12 +21,13 @@ html, body, [data-testid="stAppViewContainer"], .stApp {{
   font-family: 'Source Sans 3', 'Segoe UI', sans-serif;
 }}
 [data-testid="stHeader"] {{ background: transparent; }}
-.block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1180px; }}
+.block-container, [data-testid="stMainBlockContainer"], section.main > div {{ padding-top: 1rem !important; padding-bottom: 3rem; max-width: 1600px !important; padding-left:2rem !important; padding-right:2rem !important; }}
 
 h1.titulo {{
-  text-align:center; font-weight:900; letter-spacing:.06em; font-size:2.4rem;
-  color:#fff; margin:.2rem 0 1rem 0; text-shadow:0 0 18px rgba(34,211,238,.35);
+  text-align:center; font-weight:900; letter-spacing:.06em; font-size:2.6rem;
+  color:#fff; margin:.6rem 0 .4rem 0; text-shadow:0 0 18px rgba(34,211,238,.35);
 }}
+.logo-box {{ background:#fff; border-radius:10px; padding:.3rem .6rem; display:inline-block; }}
 
 /* radio de vistas como botones */
 div[role="radiogroup"] {{ gap:.5rem; flex-wrap:wrap; }}
@@ -75,7 +76,7 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 
 .card .h {{ font-size:.78rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:#cbd5e1; text-align:center; }}
 .card .big {{ font-size:clamp(1.3rem, 2vw, 2.3rem); font-weight:900; text-align:center; line-height:1.1; margin:.35rem 0; color:#fff; white-space:nowrap; }}
-.card .mid {{ font-size:1.6rem; font-weight:900; text-align:center; color:#fff; }}
+.card .mid {{ font-size:clamp(1.1rem, 1.5vw, 1.6rem); font-weight:900; text-align:center; color:#fff; white-space:nowrap; }}
 .card .sub {{ font-size:.85rem; color:#cbd5e1; text-align:center; font-weight:600; }}
 .card .sec {{ font-size:1.55rem; font-weight:900; color:#fff; letter-spacing:.03em; }}
 .card .sec small {{ font-size:.75rem; color:{C['cyan']}; font-weight:800; }}
@@ -106,8 +107,24 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 .pill {{ display:inline-block; border:1.5px solid {C['cyan']}; border-radius:999px; padding:.25rem .8rem;
         font-weight:800; font-size:.85rem; color:#fff; background:#0a1a3a; }}
 
+/* cuadrícula de productos (tarjetas claras, una al lado de otra) */
+.prod-grid {{ display:grid; grid-template-columns:repeat(4, 1fr); gap:.7rem; margin:.6rem 0 .9rem; }}
+.prod-grid.g7 {{ grid-template-columns:repeat(7, 1fr); }}
+@media (max-width: 1200px) {{ .prod-grid, .prod-grid.g7 {{ grid-template-columns:repeat(4, 1fr); }} }}
+@media (max-width: 800px) {{ .prod-grid, .prod-grid.g7 {{ grid-template-columns:repeat(2, 1fr); }} }}
+@media (max-width: 500px) {{ .prod-grid, .prod-grid.g7 {{ grid-template-columns:1fr; }} }}
+
+/* semáforos (tablas de cumplimiento y gestión) */
+.celda-sem {{ display:block; padding:.25rem .3rem; border-radius:4px; font-weight:800; color:#111; }}
+.sem-v {{ background:#22c55e; color:#052e16; }}
+.sem-a {{ background:#facc15; color:#3f2d00; }}
+.sem-r {{ background:#f87171; color:#450a0a; }}
+.sem-t {{ background:#0ea5e9; color:#fff; }}
+.tag {{ display:inline-block; border-radius:999px; padding:.05rem .5rem; font-size:.7rem; font-weight:800; margin-right:.15rem; }}
+.g6 {{ grid-template-columns:repeat(6,1fr); }}
+.g7 {{ grid-template-columns:repeat(7,1fr); }}
 /* barra de producto (tarjeta clara) */
-.prod {{ background:linear-gradient(180deg,#f8fafc,#eef2f7); color:#0f172a; border-radius:14px; padding:.9rem 1rem; margin-bottom:.7rem; }}
+.prod {{ background:linear-gradient(180deg,#f8fafc,#eef2f7); color:#0f172a; border-radius:14px; padding:.9rem 1rem; margin-bottom:0; }}
 .prod .n {{ display:inline-block; width:26px; height:26px; border-radius:7px; color:#fff; font-weight:800;
            text-align:center; line-height:26px; margin-right:.5rem; font-size:.85rem; }}
 .prod .name {{ font-weight:800; font-size:.85rem; letter-spacing:.03em; text-transform:uppercase; }}
@@ -116,7 +133,7 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 .prod .de {{ font-size:1rem; font-weight:800; color:#334155; }}
 .bar {{ width:100%; height:10px; background:#cbd5e1; border-radius:6px; overflow:hidden; margin:.45rem 0; }}
 .bar > div {{ height:100%; border-radius:6px; }}
-.prod .det {{ font-size:.8rem; color:#334155; line-height:1.6; }}
+.prod .det {{ font-size:.78rem; color:#334155; line-height:1.55; }}
 .prod .det b {{ color:#0f172a; }}
 
 /* prioridades */
@@ -128,7 +145,7 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 /* tabla */
 .tabla {{ width:100%; border-collapse:collapse; font-size:.85rem; }}
 .tabla th {{ text-align:center; font-size:.7rem; letter-spacing:.06em; text-transform:uppercase; color:#cbd5e1; padding:.45rem .3rem; border-bottom:1px solid #1f3b6f; }}
-.tabla td {{ text-align:center; padding:.45rem .3rem; border-bottom:1px solid #16294f; color:#fff; font-weight:700; }}
+.tabla td {{ text-align:center; padding:.35rem .3rem; border-bottom:1px solid #16294f; color:#fff; font-weight:700; font-size:.8rem; }}
 .tabla td.izq, .tabla th.izq {{ text-align:left; }}
 .tabla tr.total td {{ background:#0e2a5c; }}
 
@@ -191,12 +208,14 @@ def color_cump(x: float) -> str:
     return "t-rojo"
 
 
-def producto(n: int, nombre: str, real, meta, faltan, cump, conv=None, color="#2563eb") -> str:
+def producto(n: int, nombre: str, real, meta, faltan, cump, conv=None, color="#2563eb", extra: str = "") -> str:
     from .metrics import entero, pct, v
     ancho = max(0.0, min(1.0, v(cump))) * 100
     det = f"<b>Faltan:</b> {entero(faltan)}<br><b>Cumplimiento:</b> {pct(cump)}"
     if conv is not None:
         det += f"<br><b>Conv.:</b> {pct(conv, 1)}"
+    if extra:
+        det += f"<br>{extra}"
     return (
         f'<div class="prod"><span class="n" style="background:{color}">{n}</span>'
         f'<span class="name">{h(nombre)}</span>'
@@ -207,8 +226,9 @@ def producto(n: int, nombre: str, real, meta, faltan, cump, conv=None, color="#2
     )
 
 
-def tabla(columnas: list[str], filas: list[list[str]], total: list[str] | None = None, izq: int = 1) -> str:
-    th = "".join(f'<th class="{"izq" if i < izq else ""}">{h(c)}</th>' for i, c in enumerate(columnas))
+def tabla(columnas: list[str], filas: list[list[str]], total: list[str] | None = None, izq: int = 1,
+          escapar_cabecera: bool = True) -> str:
+    th = "".join(f'<th class="{"izq" if i < izq else ""}">{h(c) if escapar_cabecera else c}</th>' for i, c in enumerate(columnas))
     tr = ""
     for f in filas:
         tr += "<tr>" + "".join(f'<td class="{"izq" if i < izq else ""}">{c}</td>' for i, c in enumerate(f)) + "</tr>"
