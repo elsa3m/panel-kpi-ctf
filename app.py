@@ -11,6 +11,7 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
+from kpi import ajustes as A
 from kpi import config as cfg
 from kpi import historia, loader, metrics as M, ui
 from kpi.metrics import entero, fecha_txt, pct, pesos, v
@@ -219,6 +220,179 @@ def avance_dias(row) -> float:
 
 def deben(row, clave_meta: str, avance: float) -> float:
     return v(row.get(clave_meta)) * avance
+
+
+# ===========================================================================
+# BLOQUES: cada vista se arma con una lista de bloques que la usuaria puede
+# mostrar, ocultar, reordenar, abrir/cerrar y renombrar desde ⚙️ Personalizar.
+# ===========================================================================
+class Bloque:
+    """
+    Un trozo de una vista.
+
+    fijo=True  -> siempre visible y en su lugar (la cabecera, por ejemplo);
+                  no aparece en la lista de reordenar.
+    suelto=True-> se dibuja directo, sin caja desplegable.
+    """
+
+    def __init__(self, id_: str, titulo: str, dibujar, abierto: bool = True,
+                 fijo: bool = False, suelto: bool = False):
+        self.id, self.titulo, self.dibujar = id_, titulo, dibujar
+        self.abierto, self.fijo, self.suelto = abierto, fijo, suelto
+
+
+def render_bloques(vista: str, bloques: list[Bloque]) -> None:
+    """Dibuja los bloques de una vista respetando los ajustes guardados."""
+    fijos = [b for b in bloques if b.fijo]
+    movibles = [b for b in bloques if not b.fijo]
+    conf = {b.id: A.seccion(vista, b.id, b.titulo, b.abierto, i)
+            for i, b in enumerate(bloques)}
+
+    for b in fijos:
+        b.dibujar()
+
+    for b in sorted(movibles, key=lambda x: conf[x.id]["orden"]):
+        c = conf[b.id]
+        if not c["visible"]:
+            continue
+        if b.suelto:
+            b.dibujar()
+        else:
+            with st.expander(c["titulo"], expanded=c["abierto"]):
+                b.dibujar()
+
+
+def panel_personalizar(vista: str, bloques: list[Bloque]) -> None:
+    """Desplegable ⚙️: secciones, colores, tamaños, textos y umbrales."""
+    movibles = [b for b in bloques if not b.fijo]
+    with st.expander("⚙️ PERSONALIZAR PANEL", expanded=False):
+        st.caption("Los cambios quedan guardados y se aplican a todos. "
+                   "Si algo no te gusta, **Restaurar todo** vuelve a dejarlo como estaba de fábrica.")
+        t1, t2, t3, t4 = st.tabs(["📑 Secciones", "🎨 Colores y tamaños", "🚦 Umbrales", "💾 Respaldo"])
+
+        # ---- secciones ------------------------------------------------------
+        with t1:
+            if not movibles:
+                st.info("Esta vista no tiene secciones configurables.")
+            else:
+                st.caption("Marca qué secciones quieres ver, si vienen abiertas, cómo se llaman "
+                           "y en qué orden aparecen (1 = primero).")
+                filas = []
+                for b in movibles:
+                    c = A.seccion(vista, b.id, b.titulo, b.abierto, movibles.index(b))
+                    filas.append({"Sección": c["titulo"], "Se ve": c["visible"],
+                                  "Abierta": c["abierto"], "Orden": c["orden"], "_id": b.id})
+                editado = st.data_editor(
+                    pd.DataFrame(filas).sort_values("Orden"),
+                    column_config={
+                        "Sección": st.column_config.TextColumn("Sección", help="Puedes renombrarla"),
+                        "Se ve": st.column_config.CheckboxColumn("Se ve"),
+                        "Abierta": st.column_config.CheckboxColumn("Abierta"),
+                        "Orden": st.column_config.NumberColumn("Orden", min_value=0, max_value=99, step=1),
+                        "_id": None,
+                    },
+                    hide_index=True, use_container_width=True, key=f"ed_sec_{vista}")
+                if st.button("💾 Guardar secciones", key=f"gs_{vista}"):
+                    a = A.cargar()
+                    for _, r in editado.iterrows():
+                        a["secciones"][f"{vista}.{r['_id']}"] = {
+                            "visible": bool(r["Se ve"]), "abierto": bool(r["Abierta"]),
+                            "orden": int(r["Orden"]), "titulo": str(r["Sección"]).strip()}
+                    A.guardar(a)
+                    st.rerun()
+
+        # ---- colores y tamaños ---------------------------------------------
+        with t2:
+            a = A.cargar()
+            st.caption("Los colores del texto y de los bordes. La paleta de fábrica está pensada "
+                       "para que se distinga bien también en daltonismo; si la cambias, procura "
+                       "que el verde y el amarillo no queden parecidos.")
+            etiquetas = {"cyan": "Cian (destacados)", "verde": "Verde (cumple)",
+                         "amarillo": "Amarillo (en riesgo)", "rojo": "Rojo (bajo)",
+                         "morado": "Morado (bonos)", "naranjo": "Naranjo (accesorios)",
+                         "fondo": "Fondo", "card": "Fondo de tarjeta", "borde": "Borde de tarjeta",
+                         "texto": "Texto", "texto2": "Texto secundario"}
+            nuevos = {}
+            cols = st.columns(4)
+            for i, (k, etq) in enumerate(etiquetas.items()):
+                with cols[i % 4]:
+                    nuevos[k] = st.color_picker(etq, a["colores"].get(k, cfg.COLORES[k]), key=f"col_{k}")
+            c1, c2 = st.columns(2)
+            with c1:
+                esc = st.slider("Tamaño del texto", 0.85, 1.30, float(a.get("escala_texto", 1.0)), 0.05,
+                                help="1,00 es el tamaño normal. Sube a 1,15 si cuesta leer en pantallas grandes.")
+            with c2:
+                den = st.select_slider("Espacio entre tarjetas", list(A.DENSIDADES.keys()),
+                                       value=a.get("densidad", "Normal"))
+            if st.button("💾 Guardar colores y tamaños", key="gct"):
+                a["colores"], a["escala_texto"], a["densidad"] = nuevos, esc, den
+                A.guardar(a)
+                st.rerun()
+
+        # ---- umbrales -------------------------------------------------------
+        with t3:
+            a = A.cargar()
+            st.caption("Desde qué punto un número se pinta verde, amarillo o rojo.")
+            u1, u2 = st.columns(2)
+            with u1:
+                uv = st.slider("Verde desde", 0.5, 1.5, float(a.get("umbral_verde", 1.0)), 0.05,
+                               format="%.2f", help="1,00 = alcanzó lo que debía llevar al corte.")
+            with u2:
+                ua = st.slider("Amarillo desde", 0.3, 1.2, float(a.get("umbral_amarillo", 0.8)), 0.05,
+                               format="%.2f", help="Bajo este valor se pinta rojo.")
+            if ua >= uv:
+                st.warning("El amarillo debe empezar antes que el verde. Baja el amarillo o sube el verde.")
+            usar_excel = st.checkbox(
+                "Usar los umbrales de la hoja CONV-CUMP del Excel para las tablas de semáforos",
+                value=bool(a.get("usar_umbrales_excel", True)),
+                help="Recomendado: así los semáforos siempre siguen la meta oficial del mes. "
+                     "Si lo desmarcas, puedes fijar tus propios mínimos abajo.")
+            propios = dict(a.get("umbrales_propios") or {})
+            if not usar_excel:
+                st.caption("Mínimos propios (deja vacío el que quieras seguir tomando del Excel).")
+                base = mov.umbrales if mov is not None else {}
+                filas = [{"KPI": n, "_k": k,
+                          "Meta (verde)": float(propios.get(k, {}).get("meta", base.get(k, {}).get("meta", 0) or 0)),
+                          "Amarillo desde": float(propios.get(k, {}).get("amarillo", base.get(k, {}).get("amarillo", 0) or 0))}
+                         for n, k in KPIS_GESTION]
+                ed = st.data_editor(pd.DataFrame(filas),
+                                    column_config={"KPI": st.column_config.TextColumn(disabled=True),
+                                                   "Meta (verde)": st.column_config.NumberColumn(format="%.4f"),
+                                                   "Amarillo desde": st.column_config.NumberColumn(format="%.4f"),
+                                                   "_k": None},
+                                    hide_index=True, use_container_width=True, key="ed_umb")
+                propios = {r["_k"]: {"meta": float(r["Meta (verde)"]), "amarillo": float(r["Amarillo desde"])}
+                           for _, r in ed.iterrows()}
+                st.caption("Los valores van en tanto por uno: 0,26 = 26 %.")
+            if st.button("💾 Guardar umbrales", key="gu"):
+                a["umbral_verde"], a["umbral_amarillo"] = uv, ua
+                a["usar_umbrales_excel"] = usar_excel
+                a["umbrales_propios"] = {} if usar_excel else propios
+                A.guardar(a)
+                st.rerun()
+
+        # ---- respaldo -------------------------------------------------------
+        with t4:
+            st.caption("En Streamlit Cloud la configuración se borra cuando la app reinicia. "
+                       "**Descárgala** después de dejarla como te gusta y vuelve a cargarla si se pierde.")
+            r1, r2 = st.columns(2)
+            with r1:
+                st.download_button("📥 Descargar configuración", A.exportar(),
+                                   file_name="ajustes_panel_ctf.json", mime="application/json", key="dl_aj")
+            with r2:
+                sub = st.file_uploader("Cargar configuración guardada", type=["json"], key="up_aj")
+                if sub is not None:
+                    try:
+                        A.importar(sub.getvalue())
+                        st.success("Configuración restaurada.")
+                        st.rerun()
+                    except Exception as ex:  # noqa: BLE001
+                        st.error(f"No se pudo leer: {ex}")
+            st.divider()
+            if st.checkbox("Confirmo que quiero volver a los valores de fábrica", key="chk_rest"):
+                if st.button("♻️ Restaurar todo", key="btn_rest"):
+                    A.restaurar()
+                    st.rerun()
 
 
 def fila_ot(pdv: str) -> dict | None:
@@ -509,28 +683,27 @@ KPIS_PARES = [("% Real ficha", "cump_ficha", 2), ("Atenciones", "atenciones", 0)
 
 def comparacion_pares(row, ej_tienda: pd.DataFrame, ej_ctf: pd.DataFrame, codigo: str):
     """Cómo se ve este ejecutivo al lado de su tienda y de toda la empresa."""
-    with st.expander("⚖️ CÓMO VA FRENTE A SUS PARES", expanded=True):
-        filas = []
-        for etiqueta, k, dec in KPIS_PARES:
-            val = v(row.get(k))
-            m_t = ej_tienda[k].mean() if k in ej_tienda.columns and not ej_tienda.empty else None
-            fmt = (lambda x: entero(x)) if k == "atenciones" else (lambda x: pct(x, dec))
-            serie_ctf = pd.to_numeric(ej_ctf[k], errors="coerce").dropna() if k in ej_ctf.columns else pd.Series(dtype=float)
-            if len(serie_ctf) > 1:
-                puesto = int((serie_ctf > val).sum()) + 1
-                pos = f"{puesto} de {len(serie_ctf)}"
-                cls = "sem-v" if puesto <= len(serie_ctf) / 3 else ("sem-a" if puesto <= 2 * len(serie_ctf) / 3 else "sem-r")
-            else:
-                pos, cls = "—", ""
-            dif_t = (val - m_t) if m_t is not None and pd.notna(m_t) else None
-            factor = 1 if k == "atenciones" else 100
-            filas.append([h(etiqueta), fmt(val), fmt(m_t) if m_t is not None else "—",
-                          ui.delta(dif_t * factor, "" if k == "atenciones" else " pts",
-                                   0 if k == "atenciones" else 1) if dif_t is not None else "—",
-                          f'<span class="celda-sem rango {cls}">{pos}</span>' if cls else pos,
-                          tendencia(codigo, k) or "—"])
-        ui.card(ui.tabla(["KPI", "Este ejecutivo", "Prom. tienda", "vs. tienda", "Puesto en CTF", "vs. corte anterior"],
-                         filas, izq=1), "cyan")
+    filas = []
+    for etiqueta, k, dec in KPIS_PARES:
+        val = v(row.get(k))
+        m_t = ej_tienda[k].mean() if k in ej_tienda.columns and not ej_tienda.empty else None
+        fmt = (lambda x: entero(x)) if k == "atenciones" else (lambda x: pct(x, dec))
+        serie_ctf = pd.to_numeric(ej_ctf[k], errors="coerce").dropna() if k in ej_ctf.columns else pd.Series(dtype=float)
+        if len(serie_ctf) > 1:
+            puesto = int((serie_ctf > val).sum()) + 1
+            pos = f"{puesto} de {len(serie_ctf)}"
+            cls = "sem-v" if puesto <= len(serie_ctf) / 3 else ("sem-a" if puesto <= 2 * len(serie_ctf) / 3 else "sem-r")
+        else:
+            pos, cls = "—", ""
+        dif_t = (val - m_t) if m_t is not None and pd.notna(m_t) else None
+        factor = 1 if k == "atenciones" else 100
+        filas.append([h(etiqueta), fmt(val), fmt(m_t) if m_t is not None else "—",
+                      ui.delta(dif_t * factor, "" if k == "atenciones" else " pts",
+                               0 if k == "atenciones" else 1) if dif_t is not None else "—",
+                      f'<span class="celda-sem rango {cls}">{pos}</span>' if cls else pos,
+                      tendencia(codigo, k) or "—"])
+    ui.card(ui.tabla(["KPI", "Este ejecutivo", "Prom. tienda", "vs. tienda", "Puesto en CTF", "vs. corte anterior"],
+                     filas, izq=1), "cyan")
 
 
 def bloque_prioridades(row, titulo="3 PRIORIDADES DEL CORTE"):
@@ -551,8 +724,18 @@ def bloque_prioridades(row, titulo="3 PRIORIDADES DEL CORTE"):
 # ===========================================================================
 # TABLAS DE LA VISTA TIENDAS / CTF
 # ===========================================================================
+def umbral_de(clave: str) -> dict | None:
+    """Umbral vigente de un KPI: el del Excel, o el propio si se configuró uno."""
+    a = A.cargar()
+    if not a.get("usar_umbrales_excel", True):
+        propio = (a.get("umbrales_propios") or {}).get(clave)
+        if propio and (propio.get("meta") or propio.get("amarillo")):
+            return propio
+    return mov.umbrales.get(clave)
+
+
 def semaforo(valor, clave: str) -> str:
-    u = mov.umbrales.get(clave)
+    u = umbral_de(clave)
     if u is None:
         return ""
     x = v(valor)
@@ -582,7 +765,7 @@ KPIS_CUMP = [("Total móvil", "mov_cump"), ("Suscripción", "sus_cump"), ("1ra l
 
 
 def tabla_cumplimientos(ej: pd.DataFrame, avance: float):
-    u = mov.umbrales.get("mov_cump", {"meta": mov.avance_esperado, "amarillo": 0.075})
+    u = umbral_de("mov_cump") or {"meta": mov.avance_esperado, "amarillo": 0.075}
     md(f'<div class="card" style="padding:.6rem 1.1rem;display:flex;justify-content:space-between;align-items:center">'
        f'<span class="sec">👥 CUMPLIMIENTOS DE EJECUTIVOS</span><span class="pill">📍 AVANCE ESPERADO: {pct(avance, 1)}</span></div>')
     md(f'<div class="card" style="padding:.45rem 1rem;font-size:.8rem"><span class="tag sem-v">VERDE ≥ {pct(u["meta"], 1)}</span> '
@@ -614,7 +797,7 @@ def tabla_gestion(ej: pd.DataFrame):
        '<span class="tag sem-a">AMARILLO = RANGO INTERMEDIO</span> <span class="tag sem-r">ROJO = BAJO MÍNIMO</span> · Umbrales tomados directamente de la hoja CONV-CUMP del Excel.</div>')
     cabecera = ["Ejecutivo", "Nombre", "Atenc."]
     for n, k in KPIS_GESTION:
-        u = mov.umbrales.get(k)
+        u = umbral_de(k)
         cabecera.append(f'{n}<br><span class="t-cyan">META {pct(u["meta"], 1) if u else "—"}</span>')
     filas = []
     for _, r in ej.sort_values("ejecutivo").iterrows():
@@ -683,29 +866,29 @@ def vista_ejecutivo():
     bloque_cabecera(e, f"PDV {pdv}", tienda, "EJECUTIVO SELECCIONADO", codigo, minis, "", f, rf, clave=codigo)
 
     prom = ej_tienda.loc[ej_tienda["ejecutivo"] != codigo, "atenciones"]
-    bloque_indicadores(e, f, prom.mean() if not prom.empty else 0)
 
-    # lo primero que hay que hacer, arriba y siempre visible
-    bloque_prioridades(e)
-    with st.expander("📤 RESUMEN PARA ENVIAR AL EJECUTIVO", expanded=False):
+    def resumen_enviar():
         texto = M.resumen_accionable(e, nombre, tienda, mov.fecha_corte, f, mov.estandares, mov.avance_esperado)
         st.code(texto, language=None)
         st.download_button("📥 Descargar resumen (.txt)", texto.encode("utf-8"),
                            file_name=f"resumen_{codigo}_{fecha_txt(mov.fecha_corte).replace('/', '-')}.txt",
                            mime="text/plain", key="dl_resumen_ej")
 
-    bloque_movilidad(e, avance)
-    comparacion_pares(e, ej_tienda, ejecutivos, codigo)
-    bloque_fibra(e)
-    bloque_equipos_seguros_acc(e, avance)
-    with st.expander("💰 BONOS DEL EJECUTIVO", expanded=False):
-        bloque_bonos(e, jornada)
-    with st.expander("⚡ ENERGÍA · PROTECCIÓN · EPA", expanded=False):
-        bloque_ene_prot_epa(e)
-    with st.expander("🎧 ESCUCHAS", expanded=False):
-        bloque_escuchas(codigo, pdv)
-    with st.expander("🗣️ EPA Y ENCUESTAS", expanded=False):
-        bloque_epa_encuestas(codigo)
+    bloques = [
+        Bloque("indicadores", "Indicadores", lambda: bloque_indicadores(e, f, prom.mean() if not prom.empty else 0), fijo=True),
+        Bloque("prioridades", "🎯 3 PRIORIDADES DEL CORTE", lambda: bloque_prioridades(e), suelto=True),
+        Bloque("resumen", "📤 RESUMEN PARA ENVIAR AL EJECUTIVO", resumen_enviar, abierto=False),
+        Bloque("movilidad", "📱 ENTEL – MOVIL", lambda: bloque_movilidad(e, avance), suelto=True),
+        Bloque("pares", "⚖️ CÓMO VA FRENTE A SUS PARES", lambda: comparacion_pares(e, ej_tienda, ejecutivos, codigo)),
+        Bloque("fibra", "📶 FIBRA (REAL ENTEL)", lambda: bloque_fibra(e), suelto=True),
+        Bloque("equipos", "📱 EQUIPOS · SEGUROS · ACCESORIOS", lambda: bloque_equipos_seguros_acc(e, avance), suelto=True),
+        Bloque("bonos", "💰 BONOS DEL EJECUTIVO", lambda: bloque_bonos(e, jornada), abierto=False),
+        Bloque("energia", "⚡ ENERGÍA · PROTECCIÓN · EPA", lambda: bloque_ene_prot_epa(e), abierto=False),
+        Bloque("escuchas", "🎧 ESCUCHAS", lambda: bloque_escuchas(codigo, pdv), abierto=False),
+        Bloque("encuestas", "🗣️ EPA Y ENCUESTAS", lambda: bloque_epa_encuestas(codigo), abierto=False),
+    ]
+    render_bloques("ejecutivo", bloques)
+    panel_personalizar("ejecutivo", bloques)
     md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Ejecutivo · {h(tienda)} · Ejecutivos: {len(ej_tienda)}</div>')
 
 
@@ -735,24 +918,21 @@ def vista_tiendas():
        f'Corte: <b>{fecha_txt(mov.fecha_corte)}</b> · {ORIGEN_OT if fila_ot(sel) else ORIGEN_MOV}</div>')
     bloque_cabecera(row, pdv_txt, sub_pdv, titulo, nombre_grande, None, "¡Vamos por más! Cada venta cuenta.", f, None,
                     clave="CTF" if sel == "CTF" else sel)
-    bloque_indicadores(row, f, None)
-    tablero_ejecutivos(ej, f)
-    bloque_movilidad(row, avance)
-    bloque_fibra(row)
-    with st.expander("📱 EQUIPOS · SEGUROS · ACCESORIOS", expanded=True):
-        bloque_equipos_seguros_acc(row, avance)
-    with st.expander("⚡ ENERGÍA · PROTECCIÓN · EPA", expanded=False):
-        bloque_ene_prot_epa(row)
-    with st.expander("👥 CUMPLIMIENTOS DE EJECUTIVOS", expanded=True):
-        tabla_cumplimientos(ej, avance)
-    with st.expander("🎯 GESTIÓN DE EJECUTIVOS (conversiones y attach)", expanded=False):
-        tabla_gestion(ej)
-    with st.expander("🏆 RANKING CTF DE EJECUTIVOS", expanded=False):
-        tabla_ranking(ej)
-    with st.expander("🏆 BONO WINNER", expanded=False):
-        tabla_bono_winner(ej)
-    with st.expander("🎧 ESCUCHAS", expanded=False):
-        bloque_escuchas(escucha_clave, escucha_pdv, f"ESCUCHAS · {nombre_grande}")
+    bloques = [
+        Bloque("indicadores", "Indicadores", lambda: bloque_indicadores(row, f, None), fijo=True),
+        Bloque("equipo", "🚦 QUIÉN NECESITA APOYO HOY", lambda: tablero_ejecutivos(ej, f), suelto=True),
+        Bloque("movilidad", "📱 ENTEL – MOVIL", lambda: bloque_movilidad(row, avance), suelto=True),
+        Bloque("fibra", "📶 FIBRA (REAL ENTEL)", lambda: bloque_fibra(row), suelto=True),
+        Bloque("equipos", "📱 EQUIPOS · SEGUROS · ACCESORIOS", lambda: bloque_equipos_seguros_acc(row, avance)),
+        Bloque("energia", "⚡ ENERGÍA · PROTECCIÓN · EPA", lambda: bloque_ene_prot_epa(row), abierto=False),
+        Bloque("cumplimientos", "👥 CUMPLIMIENTOS DE EJECUTIVOS", lambda: tabla_cumplimientos(ej, avance)),
+        Bloque("gestion", "🎯 GESTIÓN DE EJECUTIVOS (conversiones y attach)", lambda: tabla_gestion(ej), abierto=False),
+        Bloque("ranking", "🏆 RANKING CTF DE EJECUTIVOS", lambda: tabla_ranking(ej), abierto=False),
+        Bloque("winner", "🏆 BONO WINNER", lambda: tabla_bono_winner(ej), abierto=False),
+        Bloque("escuchas", "🎧 ESCUCHAS", lambda: bloque_escuchas(escucha_clave, escucha_pdv, f"ESCUCHAS · {nombre_grande}"), abierto=False),
+    ]
+    render_bloques("tiendas", bloques)
+    panel_personalizar("tiendas", bloques)
     md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Tiendas / CTF · {h(nombre_grande)}</div>')
 
 
@@ -892,32 +1072,37 @@ def vista_jefe():
     for col, (tt, val, sub, cl) in zip(k, tarjetas):
         with col:
             ui.kpi(tt, val, sub, cl, "")
-    ui.seccion("👥", "EJECUTIVOS DE LA TIENDA", "semáforo del corte")
-    filas = []
-    for _, r in ej.sort_values("cump_ficha", ascending=False).iterrows():
-        f = M.ficha(r, mov.pesos)
-        al = M.alertas(r, mov.estandares, mov.avance_esperado)
-        filas.append([h(r["ejecutivo"]), h(mov.nombres.get(r["ejecutivo"], "")), entero(r["atenciones"]),
-                      f'<span class="{ui.color_cump(f["cump"])}">{pct(f["cump"])}</span>', str(f["tramo"]),
-                      f'<span class="{ui.color_cump(f["proy"])}">{pct(f["proy"])}</span>',
-                      f"{entero(r['mov_real'])}/{M.ceil_pos(deben(r, 'mov_meta', avance))}", f"{entero(r['porta_real'])}/{M.ceil_pos(deben(r, 'porta_meta', avance))}",
-                      f"{entero(r['fib_real'])}/{M.ceil_pos(deben(r, 'fib_meta', avance))}", f"{entero(r['seg_real'])}/{M.ceil_pos(deben(r, 'seg_meta', avance))}",
-                      pct(r["eq_cump"]), pct(r["epa"], 0), f'<span class="{"t-rojo" if len(al) >= 8 else "t-amarillo" if len(al) >= 4 else "t-verde"}">{len(al)}</span>'])
-    ui.card(ui.tabla(["Ejecutivo", "Nombre", "Atenc.", "% Real", "Tramo", "% Proy.", "Móvil / corte", "Porta / corte", "Fibra / corte", "Seg. / corte", "Cump. eq.", "EPA", "Alertas"], filas, izq=2), "cyan")
+    def tabla_equipo():
+        filas = []
+        for _, r in ej.sort_values("cump_ficha", ascending=False).iterrows():
+            fr = M.ficha(r, mov.pesos)
+            al = M.alertas(r, mov.estandares, mov.avance_esperado)
+            filas.append([h(r["ejecutivo"]), h(mov.nombres.get(r["ejecutivo"], "")), entero(r["atenciones"]),
+                          f'<span class="{ui.color_cump(fr["cump"])}">{pct(fr["cump"])}</span>', str(fr["tramo"]),
+                          f'<span class="{ui.color_cump(fr["proy"])}">{M.pct_topado(fr["proy"], cfg.TOPE_PROYECCION_VISUAL, 2)}</span>',
+                          f"{entero(r['mov_real'])}/{M.ceil_pos(deben(r, 'mov_meta', avance))}",
+                          f"{entero(r['porta_real'])}/{M.ceil_pos(deben(r, 'porta_meta', avance))}",
+                          f"{entero(r['fib_real'])}/{M.ceil_pos(deben(r, 'fib_meta', avance))}",
+                          f"{entero(r['seg_real'])}/{M.ceil_pos(deben(r, 'seg_meta', avance))}",
+                          pct(r["eq_cump"]), pct(r["epa"], 0),
+                          f'<span class="{"t-rojo" if len(al) >= 8 else "t-amarillo" if len(al) >= 4 else "t-verde"}">{len(al)}</span>'])
+        ui.card(ui.tabla(["Ejecutivo", "Nombre", "Atenc.", "% Real", "Tramo", "% Proy.", "Móvil / corte",
+                          "Porta / corte", "Fibra / corte", "Seg. / corte", "Cump. eq.", "EPA", "Alertas"],
+                         filas, izq=2), "cyan")
 
-    ui.seccion("🎯", "PRIORIDADES POR EJECUTIVO")
-    cols = st.columns(3)
-    for i, (_, r) in enumerate(ej.iterrows()):
-        with cols[i % 3]:
-            prios = M.prioridades(M.alertas(r, mov.estandares, mov.avance_esperado), 3)
-            cuerpo = f'<div class="sec" style="font-size:1.1rem">{h(r["ejecutivo"])}</div>'
-            for j, p in enumerate(prios, 1):
-                cuerpo += f'<div class="prio"><div class="k">PRIORIDAD {j} · {h(p["foco"])}</div><div class="d">{h(p["texto"])}</div></div>'
-            if not prios:
-                cuerpo += '<div class="sub t-verde">Sin alertas.</div>'
-            ui.card(cuerpo, "rosa")
+    def prioridades_equipo():
+        cols = st.columns(3)
+        for i, (_, r) in enumerate(ej.iterrows()):
+            with cols[i % 3]:
+                prios = M.prioridades(M.alertas(r, mov.estandares, mov.avance_esperado), 3)
+                cuerpo = f'<div class="sec" style="font-size:1.1rem">{h(r["ejecutivo"])}</div>'
+                for j, pr in enumerate(prios, 1):
+                    cuerpo += f'<div class="prio"><div class="k">PRIORIDAD {j} · {h(pr["foco"])}</div><div class="d">{h(pr["texto"])}</div></div>'
+                if not prios:
+                    cuerpo += '<div class="sub t-verde">Sin alertas.</div>'
+                ui.card(cuerpo, "rosa")
 
-    with st.expander("📤 RESUMEN DE LA TIENDA PARA ENVIAR", expanded=False):
+    def resumen_tienda():
         partes = []
         for _, r in ej.sort_values("cump_ficha").iterrows():
             fr = M.ficha(r, mov.pesos)
@@ -929,12 +1114,17 @@ def vista_jefe():
                            mime="text/plain", key="dl_resumen_tienda")
         st.code(texto[:4000] + ("\n…" if len(texto) > 4000 else ""), language=None)
 
-    bloque_movilidad(t, avance)
-    bloque_fibra(t)
-    with st.expander("📱 EQUIPOS · SEGUROS · ACCESORIOS", expanded=False):
-        bloque_equipos_seguros_acc(t, avance)
-    with st.expander("⚡ ENERGÍA · PROTECCIÓN · EPA", expanded=False):
-        bloque_ene_prot_epa(t)
+    bloques = [
+        Bloque("equipo", "👥 EJECUTIVOS DE LA TIENDA", tabla_equipo),
+        Bloque("prioridades", "🎯 PRIORIDADES POR EJECUTIVO", prioridades_equipo),
+        Bloque("resumen", "📤 RESUMEN DE LA TIENDA PARA ENVIAR", resumen_tienda, abierto=False),
+        Bloque("movilidad", "📱 ENTEL – MOVIL", lambda: bloque_movilidad(t, avance), suelto=True),
+        Bloque("fibra", "📶 FIBRA (REAL ENTEL)", lambda: bloque_fibra(t), suelto=True),
+        Bloque("equipos", "📱 EQUIPOS · SEGUROS · ACCESORIOS", lambda: bloque_equipos_seguros_acc(t, avance), abierto=False),
+        Bloque("energia", "⚡ ENERGÍA · PROTECCIÓN · EPA", lambda: bloque_ene_prot_epa(t), abierto=False),
+    ]
+    render_bloques("jefe", bloques)
+    panel_personalizar("jefe", bloques)
     md(f'<div class="foot">Archivo cargado: {h(NOMBRE_ARCHIVO)} · Vista: Jefe de tienda · {h(tienda)}</div>')
 
 
@@ -991,7 +1181,6 @@ def bloque_reagendamientos(s: pd.DataFrame):
 
 
 def bloque_cancelaciones(s: pd.DataFrame, con_tienda: bool = True):
-    ui.seccion("❌", "ANÁLISIS DE CANCELACIONES")
     canc = s[s["estatus"] == "CANCELADO"] if not s.empty else pd.DataFrame()
     if canc.empty:
         st.info("Sin cancelaciones registradas en el periodo.")
@@ -1079,75 +1268,72 @@ def vista_fibra_tiendas():
     ui.card(ui.tabla(["Ejecutivo", "Tienda", "Meta", "Real", "Afinidad", "Total", "Cump.", "Proy.", "Deben",
                       "Pend. sept.", "Pend. oct.", "Tasa inst.", "Valid."], filas, izq=2), "cyan")
 
-    # --- evolutivo diario ----------------------------------------------------
-    expander_evo = st.expander("📅 EVOLUTIVO DIARIO DE SOLICITUDES", expanded=False)
-    ref = fib.fecha_actualizacion or mov.fecha_corte
-    with expander_evo:
-      if not s.empty and ref:
-          dias = [dt.date(ref.year, ref.month, d) for d in range(1, ref.day + 1)]
-          filas = []
-          for cod in sorted(s["ejecutivo"].unique()):
-              ss = s[s["ejecutivo"] == cod]
-              fechas = [f_ for f_ in ss["fecha_solicitud"] if isinstance(f_, dt.date) and pd.notna(f_)]
-              ultima = max(fechas) if fechas else None
-              sin = max(0, (ref - ultima).days) if ultima else None
-              por_dia = [int((ss["fecha_solicitud"] == d).sum()) for d in dias]
-              celdas = [f'<span class="celda-sem {"sem-v" if n >= 3 else ("sem-a" if n >= 1 else "")}">{n or ""}</span>' for n in por_dia]
-              filas.append([h(ss.iloc[0]["pdv"]), h(cod), fecha_txt(ultima), str(sin) if sin is not None else "—", str(sum(por_dia))] + celdas)
-          ui.card(ui.tabla(["PDV", "Ejecutivo", "Última solicitud", "Días sin solicitud", "Total"] + [d.strftime("%d/%m") for d in dias], filas, izq=2), "cyan")
+    def evolutivo():
+        ref = fib.fecha_actualizacion or mov.fecha_corte
+        if s.empty or not ref:
+            st.info("Sin solicitudes en el periodo.")
+            return
+        dias = [dt.date(ref.year, ref.month, d) for d in range(1, ref.day + 1)]
+        filas = []
+        for cod in sorted(s["ejecutivo"].unique()):
+            ss_ = s[s["ejecutivo"] == cod]
+            fechas = [f_ for f_ in ss_["fecha_solicitud"] if isinstance(f_, dt.date) and pd.notna(f_)]
+            ultima = max(fechas) if fechas else None
+            sin = max(0, (ref - ultima).days) if ultima else None
+            por_dia = [int((ss_["fecha_solicitud"] == d).sum()) for d in dias]
+            celdas = [f'<span class="celda-sem {"sem-v" if n >= 3 else ("sem-a" if n >= 1 else "")}">{n or ""}</span>' for n in por_dia]
+            filas.append([h(ss_.iloc[0]["pdv"]), h(cod), fecha_txt(ultima),
+                          str(sin) if sin is not None else "—", str(sum(por_dia))] + celdas)
+        ui.card(ui.tabla(["PDV", "Ejecutivo", "Última solicitud", "Días sin solicitud", "Total"]
+                         + [d.strftime("%d/%m") for d in dias], filas, izq=2), "cyan")
 
-    with st.expander("🔁 REAGENDAMIENTOS", expanded=False):
-        bloque_reagendamientos(s)
+    def agenda():
+        st.caption(f"Tienda seleccionada: {etiquetas[sel]}. Filtra el periodo para revisar qué se instalará "
+                   f"y el estado actual de cada solicitud.")
+        f1, f2 = st.columns([1, 2])
+        with f1:
+            campo = st.selectbox("📅 Filtrar según", ["Fecha de instalación", "Fecha de solicitud"], key="fibra_campo")
+        col_f = "fecha_instalacion" if campo.startswith("Fecha de inst") else "fecha_solicitud"
+        fechas_validas = [f_ for f_ in s[col_f] if isinstance(f_, dt.date) and pd.notna(f_)] if not s.empty else []
+        with f2:
+            rango = st.date_input("📆 Rango de fechas", value=(min(fechas_validas), max(fechas_validas)),
+                                  key="fibra_rango") if fechas_validas else None
+        estados = st.multiselect("📌 Estado de las solicitudes", ESTATUS_ORDEN,
+                                 default=[e_ for e_ in ESTATUS_ORDEN if e_ in set(s["estatus"].dropna())],
+                                 key="fibra_estados")
+        ss = s[s["estatus"].isin(estados)] if not s.empty else s
+        if rango and isinstance(rango, tuple) and len(rango) == 2 and not ss.empty:
+            ss = ss[ss[col_f].map(lambda f_: isinstance(f_, dt.date) and pd.notna(f_) and rango[0] <= f_ <= rango[1])]
 
-    # --- agenda y estado de instalaciones ------------------------------------
-    ui.seccion("📆", "AGENDA Y ESTADO DE INSTALACIONES")
-    st.caption(f"Tienda seleccionada: {etiquetas[sel]}. Filtra el periodo para revisar qué se instalará y el estado actual de cada solicitud.")
-    f1, f2 = st.columns([1, 2])
-    with f1:
-        campo = st.selectbox("📅 Filtrar según", ["Fecha de instalación", "Fecha de solicitud"], key="fibra_campo")
-    col_f = "fecha_instalacion" if campo.startswith("Fecha de inst") else "fecha_solicitud"
-    fechas_validas = [f_ for f_ in s[col_f] if isinstance(f_, dt.date) and pd.notna(f_)] if not s.empty else []
-    with f2:
-        if fechas_validas:
-            rango = st.date_input("📆 Rango de fechas", value=(min(fechas_validas), max(fechas_validas)), key="fibra_rango")
-        else:
-            rango = None
-    estados = st.multiselect("📌 Estado de las solicitudes", ESTATUS_ORDEN,
-                             default=[e for e in ESTATUS_ORDEN if e in set(s["estatus"].dropna())], key="fibra_estados")
-    ss = s[s["estatus"].isin(estados)] if not s.empty else s
-    if rango and isinstance(rango, tuple) and len(rango) == 2 and not ss.empty:
-        ss = ss[ss[col_f].map(lambda f_: isinstance(f_, dt.date) and pd.notna(f_) and rango[0] <= f_ <= rango[1])]
-
-    n_sol = len(ss)
-    n_inst = int((ss["estatus"] == "INSTALADA").sum()) if n_sol else 0
-    n_canc = int((ss["estatus"] == "CANCELADO").sum()) if n_sol else 0
-    n_reag = int((ss["reagendamientos"] > 0).sum()) if n_sol else 0
-    c = st.columns(5)
-    for col, (t, val, sub, cl, b) in zip(c, [("📋 Solicitudes", n_sol, "En el periodo", "t-cyan", "cyan"),
-                                             ("📦 Por instalar", n_sol - n_inst - n_canc, "Pendientes / en curso", "t-amarillo", "amarillo"),
-                                             ("✅ Instaladas", n_inst, "Completadas", "t-verde", "verde"),
-                                             ("❌ Canceladas", n_canc, "No se instalarán", "t-rojo", "rojo"),
-                                             ("🔁 Reagendadas", n_reag, "Con más de un intento", "t-morado", "morado")]):
-        with col:
-            ui.kpi(t, str(val), sub, cl, b)
-
-    if not ss.empty:
+        n_sol = len(ss)
+        n_inst = int((ss["estatus"] == "INSTALADA").sum()) if n_sol else 0
+        n_canc = int((ss["estatus"] == "CANCELADO").sum()) if n_sol else 0
+        n_reag = int((ss["reagendamientos"] > 0).sum()) if n_sol else 0
+        c = st.columns(5)
+        for col, (t, val, sub, cl, b) in zip(c, [("📋 Solicitudes", n_sol, "En el periodo", "t-cyan", "cyan"),
+                                                 ("📦 Por instalar", n_sol - n_inst - n_canc, "Pendientes / en curso", "t-amarillo", "amarillo"),
+                                                 ("✅ Instaladas", n_inst, "Completadas", "t-verde", "verde"),
+                                                 ("❌ Canceladas", n_canc, "No se instalarán", "t-rojo", "rojo"),
+                                                 ("🔁 Reagendadas", n_reag, "Con más de un intento", "t-morado", "morado")]):
+            with col:
+                ui.kpi(t, str(val), sub, cl, b)
+        if ss.empty:
+            return
         g1, g2 = st.columns(2)
         with g1:
             st.caption("Carga de instalaciones por día")
             por_dia = ss.dropna(subset=[col_f]).groupby(col_f).size()
             if not por_dia.empty:
                 por_dia.index = [f_.strftime("%d/%m") for f_ in por_dia.index]
-                st.bar_chart(por_dia.rename("órdenes"), color="#22d3ee")
+                st.bar_chart(por_dia.rename("órdenes"), color=A.colores()["cyan"])
         with g2:
             st.caption("Distribución por estado")
-            st.bar_chart(ss["estatus"].value_counts(), color="#0ea5e9")
-
+            st.bar_chart(ss["estatus"].value_counts(), color=A.colores()["cyan"])
         st.caption("Detalle de solicitudes")
         cols = ["id", "pdv", "ejecutivo", "fecha_solicitud", "fecha_instalacion", "estado", "estatus",
                 "intentos", "reagendamientos", "contratista", "comuna", "motivo"]
         vis = ss[[c_ for c_ in cols if c_ in ss.columns]].copy()
-        vis["pdv"] = vis["pdv"].map(lambda p: nombre_tienda.get(p, p))
+        vis["pdv"] = vis["pdv"].map(lambda pp: nombre_tienda.get(pp, pp))
         vis.columns = ["ID", "Tienda", "Nombre ejecutivo", "Fecha solicitud", "Fecha instalación", "Estado", "Estatus",
                        "Intentos", "Reagendamientos", "Contratista", "Comuna", "Motivo"][:len(vis.columns)]
         vis = vis.fillna("").astype(str).replace({"None": "", "NaT": "", "nan": ""})
@@ -1155,23 +1341,32 @@ def vista_fibra_tiendas():
         st.download_button("📥 Descargar agenda filtrada (CSV)", vis.to_csv(index=False).encode("utf-8-sig"),
                            file_name=f"agenda_fibra_{fecha_txt(mov.fecha_corte).replace('/', '-')}.csv", mime="text/csv")
 
-    bloque_cancelaciones(s)
+    def comparativo():
+        filas = []
+        for pdv_, nom in nombre_tienda.items():
+            sp = sol[sol["pdv"] == pdv_] if not sol.empty else pd.DataFrame()
+            er = res[(res["es_ejecutivo"]) & (res["pdv"] == pdv_)]
+            m_, r_ = er["meta_fibra"].fillna(0).sum(), er["real_fibra"].fillna(0).sum()
+            cu = r_ / m_ if m_ else 0.0
+            i_ = int((sp["estatus"] == "INSTALADA").sum()) if len(sp) else 0
+            filas.append([h(nom), str(len(sp)), str(i_),
+                          str(int((sp["estatus"] == "CANCELADO").sum()) if len(sp) else 0),
+                          str(int(sp["estatus"].isin(["AGENDADA", "EN INSTALACIÓN", "REPROGRAMADA"]).sum()) if len(sp) else 0),
+                          str(int((sp["estatus"] == "RECONTRATADA").sum()) if len(sp) else 0), entero(m_), entero(r_),
+                          f'<span class="{ui.color_cump(cu / max(avance, 1e-9))}">{pct(cu, 1)}</span>',
+                          f'<span class="{ui.color_cump(i_ / len(sp) if len(sp) else 0)}">{pct(i_ / len(sp) if len(sp) else 0, 1)}</span>'])
+        ui.card(ui.tabla(["Tienda", "Órdenes", "Instaladas", "Canceladas", "En progreso", "Recontratadas",
+                          "Meta", "Real", "Cumplimiento", "Tasa instalación"], filas), "cyan")
 
-    # --- comparativo de tiendas ---------------------------------------------
-    ui.seccion("🏬", "COMPARATIVO DE TIENDAS")
-    filas = []
-    for pdv_, nom in nombre_tienda.items():
-        sp = sol[sol["pdv"] == pdv_] if not sol.empty else pd.DataFrame()
-        er = res[(res["es_ejecutivo"]) & (res["pdv"] == pdv_)]
-        m_, r_ = er["meta_fibra"].fillna(0).sum(), er["real_fibra"].fillna(0).sum()
-        cu = r_ / m_ if m_ else 0.0
-        i_ = int((sp["estatus"] == "INSTALADA").sum()) if len(sp) else 0
-        filas.append([h(nom), str(len(sp)), str(i_), str(int((sp["estatus"] == "CANCELADO").sum()) if len(sp) else 0),
-                      str(int(sp["estatus"].isin(["AGENDADA", "EN INSTALACIÓN", "REPROGRAMADA"]).sum()) if len(sp) else 0),
-                      str(int((sp["estatus"] == "RECONTRATADA").sum()) if len(sp) else 0), entero(m_), entero(r_),
-                      f'<span class="{ui.color_cump(cu / max(avance, 1e-9))}">{pct(cu, 1)}</span>',
-                      f'<span class="{ui.color_cump(i_ / len(sp) if len(sp) else 0)}">{pct(i_ / len(sp) if len(sp) else 0, 1)}</span>'])
-    ui.card(ui.tabla(["Tienda", "Órdenes", "Instaladas", "Canceladas", "En progreso", "Recontratadas", "Meta", "Real", "Cumplimiento", "Tasa instalación"], filas), "cyan")
+    bloques = [
+        Bloque("evolutivo", "📅 EVOLUTIVO DIARIO DE SOLICITUDES", evolutivo, abierto=False),
+        Bloque("reagenda", "🔁 REAGENDAMIENTOS", lambda: bloque_reagendamientos(s), abierto=False),
+        Bloque("agenda", "📆 AGENDA Y ESTADO DE INSTALACIONES", agenda),
+        Bloque("cancelaciones", "❌ ANÁLISIS DE CANCELACIONES", lambda: bloque_cancelaciones(s), abierto=False),
+        Bloque("comparativo", "🏬 COMPARATIVO DE TIENDAS", comparativo),
+    ]
+    render_bloques("fibra_tiendas", bloques)
+    panel_personalizar("fibra_tiendas", bloques)
     md(f'<div class="foot">Excel Fibra activo: {h(fib.archivo)} · Vista: 📡 FIBRA TIENDAS</div>')
 
 
@@ -1224,36 +1419,37 @@ def vista_fibra_ejecutivos():
     else:
         md('<div class="card verde" style="padding:.55rem 1rem"><b class="t-verde">▲ Va al día o por sobre el corte.</b></div>')
 
-    # ---- 2. ¿En qué estado están sus órdenes? -------------------------------
-    ui.seccion("📦", "SUS ÓRDENES", "en qué va cada solicitud")
-    bloque_ordenes(s)
+    def donde_se_pierden():
+        c_ = st.columns(5)
+        for col, (t, val, sub) in zip(c_, [("📋 Solicitudes", entero(r.get("sol_ok")), "Órdenes ingresadas"),
+                                           ("🟡 Pendientes", entero(r.get("FIBRA PEND. SEPT")), "Del mes en curso"),
+                                           ("❌ Rechazos", entero(r.get("rechazo")), "No siguieron"),
+                                           ("🔁 Recontratadas", entero(r.get("recont")), "Volvieron a contratar"),
+                                           ("📅 Pend. próx. mes", entero(r.get("PEND. OCT")), "Quedan para después")]):
+            with col:
+                ui.kpi(t, val, sub, "t-cyan", "")
 
-    # ---- 3. ¿Dónde se está perdiendo? --------------------------------------
-    ui.seccion("🔎", "DÓNDE SE PIERDEN", "pendientes, rechazos y reagendamientos")
-    c = st.columns(5)
-    for col, (t, val, sub) in zip(c, [("📋 Solicitudes", entero(r.get("sol_ok")), "Órdenes ingresadas"),
-                                      ("🟡 Pendientes", entero(r.get("FIBRA PEND. SEPT")), "Del mes en curso"),
-                                      ("❌ Rechazos", entero(r.get("rechazo")), "No siguieron"),
-                                      ("🔁 Recontratadas", entero(r.get("recont")), "Volvieron a contratar"),
-                                      ("📅 Pend. próx. mes", entero(r.get("PEND. OCT")), "Quedan para después")]):
-        with col:
-            ui.kpi(t, val, sub, "t-cyan", "")
-    with st.expander("🔁 REAGENDAMIENTOS", expanded=False):
-        bloque_reagendamientos(s)
-    with st.expander("❌ ANÁLISIS DE CANCELACIONES", expanded=False):
-        bloque_cancelaciones(s, con_tienda=False)
-
-    # ---- 4. El detalle, para quien lo necesite ------------------------------
-    ui.seccion("📋", "DETALLE DE ÓRDENES")
-    if s.empty:
-        st.info("Este ejecutivo no tiene órdenes registradas en el periodo.")
-    else:
+    def detalle():
+        if s.empty:
+            st.info("Este ejecutivo no tiene órdenes registradas en el periodo.")
+            return
         cols = ["id", "fecha_solicitud", "fecha_instalacion", "estado", "estatus", "tipo_rechazo", "motivo",
                 "intentos", "reagendamientos", "contratista", "comuna"]
         vis = s[[c_ for c_ in cols if c_ in s.columns]].copy()
         vis.columns = ["ID", "Fecha de solicitud", "Fecha de instalación", "Estado", "Estatus", "Tipo de rechazo",
                        "Motivo", "Intentos", "Reagendamientos", "Contratista", "Comuna"][:len(vis.columns)]
-        st.dataframe(vis.fillna("").astype(str).replace({"None": "", "NaT": "", "nan": ""}), use_container_width=True, hide_index=True)
+        st.dataframe(vis.fillna("").astype(str).replace({"None": "", "NaT": "", "nan": ""}),
+                     use_container_width=True, hide_index=True)
+
+    bloques = [
+        Bloque("ordenes", "📦 SUS ÓRDENES", lambda: bloque_ordenes(s)),
+        Bloque("perdidas", "🔎 DÓNDE SE PIERDEN", donde_se_pierden),
+        Bloque("reagenda", "🔁 REAGENDAMIENTOS", lambda: bloque_reagendamientos(s), abierto=False),
+        Bloque("cancelaciones", "❌ ANÁLISIS DE CANCELACIONES", lambda: bloque_cancelaciones(s, con_tienda=False), abierto=False),
+        Bloque("detalle", "📋 DETALLE DE ÓRDENES", detalle, abierto=False),
+    ]
+    render_bloques("fibra_ejecutivos", bloques)
+    panel_personalizar("fibra_ejecutivos", bloques)
     md(f'<div class="foot">Excel Fibra activo: {h(fib.archivo)} · Vista: 👷 FIBRA EJECUTIVOS</div>')
 
 

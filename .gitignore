@@ -10,3 +10,7 @@ venv/
 
 # secretos locales (contraseña de la vista Jefe de Tienda)
 .streamlit/secrets.toml
+
+# configuración editable desde el propio panel
+data/ajustes.json
+data/historia.csv

@@ -159,6 +159,45 @@ Ahora se lee como una secuencia, no como un montón de tarjetas sueltas:
 
 ---
 
+# 13. ⚙️ Personalizar panel — para editarlo sin pedírmelo
+
+Al final de cada vista hay un desplegable **⚙️ PERSONALIZAR PANEL** con cuatro
+pestañas. Lo que cambies ahí queda guardado y se aplica de inmediato.
+
+### 📑 Secciones
+Una tabla con todas las secciones de esa vista. Puedes:
+
+- **Renombrarlas** — escribe encima del nombre (así habrías hecho tú misma el
+  cambio de MOVILIDAD a MOVIL)
+- **Ocultarlas** — desmarca "Se ve"
+- **Abrirlas o cerrarlas por defecto** — la casilla "Abierta"
+- **Reordenarlas** — la columna "Orden": 0 va primero
+
+Luego **💾 Guardar secciones**.
+
+### 🎨 Colores y tamaños
+Un selector de color por cada color del panel, el tamaño del texto (de 0,85 a
+1,30) y qué tan apretadas van las tarjetas (Compacto / Normal / Amplio).
+
+Un aviso: la paleta de fábrica está calculada para que se distinga bien también
+en daltonismo. Si cambias el verde o el amarillo, procura que no queden
+parecidos entre sí.
+
+### 🚦 Umbrales
+Desde qué punto un número se pinta verde, amarillo o rojo. Y, si quieres, puedes
+dejar de usar los umbrales de la hoja CONV-CUMP y fijar tus propios mínimos por
+KPI (en tanto por uno: 0,26 = 26 %).
+
+### 💾 Respaldo
+En Streamlit Cloud la configuración se borra cuando la app reinicia, igual que
+el histórico. **Descarga la configuración** cuando la dejes como te gusta, y
+vuelve a cargarla si se pierde. También está **♻️ Restaurar todo**, que vuelve
+a los valores de fábrica.
+
+**Ojo:** los cambios son para todos los que abran el panel, no solo para ti.
+
+---
+
 ## Qué NO cambió
 
 - Ningún cálculo de negocio: tramos, bonos, ficha ponderada, alertas.

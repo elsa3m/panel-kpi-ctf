@@ -9,8 +9,20 @@ import html
 
 import streamlit as st
 
-from .config import COLORES as C
+from . import ajustes as A
 from .config import SEMAFORO as S
+
+# Paleta y medidas efectivas: los valores de fábrica de config.py, pisados por
+# lo que la usuaria haya elegido en "⚙️ PERSONALIZAR PANEL".
+C = A.colores()
+_D = A.densidad()
+_E = A.escala()
+
+
+def _r(rem: float) -> str:
+    """Tamaño en rem ajustado por la escala de texto elegida."""
+    return f"{rem * _E:.3f}rem"
+
 
 CSS = f"""
 <style>
@@ -78,7 +90,7 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 /* ---------- tarjetas ---------- */
 .card {{
   background:linear-gradient(180deg,#0d1b3a 0%, {C['card']} 100%);
-  border:1.5px solid {C['borde']}; border-radius:14px; padding:.7rem .85rem; margin-bottom:.55rem;
+  border:1.5px solid {C['borde']}; border-radius:14px; padding:{_D['card_pad']}; margin-bottom:{_D['card_gap']};
   box-shadow:0 0 0 1px rgba(30,58,138,.35), 0 6px 18px rgba(0,0,0,.35);
 }}
 .card.cyan {{ border-color:{C['cyan']}; }}
@@ -90,10 +102,10 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 .card.rosa {{ border-color:#f472b6; background:linear-gradient(180deg,#2a0f24 0%, #1a0a18 100%); }}
 .card.light {{ background:linear-gradient(180deg,#f8fafc,#e2e8f0); color:#0f172a; border-color:#cbd5e1; }}
 
-.card .h {{ font-size:.92rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#d3dbe6; text-align:center; }}
+.card .h {{ font-size:{_r(0.92)}; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#d3dbe6; text-align:center; }}
 .card .big {{ font-size:clamp(1.45rem, 2vw, 2.1rem); font-weight:900; text-align:center; line-height:1.1; margin:.25rem 0; color:#fff; white-space:nowrap; }}
 .card .mid {{ font-size:clamp(1.05rem, 1.4vw, 1.45rem); font-weight:900; text-align:center; color:#fff; white-space:nowrap; }}
-.card .sub {{ font-size:.85rem; color:#d3dbe6; text-align:center; font-weight:600; line-height:1.4; }}
+.card .sub {{ font-size:{_r(0.85)}; color:#d3dbe6; text-align:center; font-weight:600; line-height:1.4; }}
 .card .sec {{ font-size:clamp(1.05rem, 1.6vw, 1.35rem); font-weight:900; color:#fff; letter-spacing:.03em; }}
 .card .sec small {{ font-size:.75rem; color:{C['cyan']}; font-weight:800; }}
 .t-cyan {{ color:{C['cyan']} !important; }}
@@ -105,19 +117,19 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 .hr {{ border-top:1px solid #1f3b6f; margin:.7rem 0; }}
 
 /* grillas internas */
-.grid {{ display:grid; gap:.6rem; }}
+.grid {{ display:grid; gap:{_D['grid_gap']}; }}
 .g2 {{ grid-template-columns:repeat(2,1fr); }}
 .g3 {{ grid-template-columns:repeat(3,1fr); }}
 .g4 {{ grid-template-columns:repeat(4,1fr); }}
 .g5 {{ grid-template-columns:repeat(5,1fr); }}
 .cell {{ text-align:center; padding:.35rem .25rem; border-bottom:1px solid #1f3b6f; }}
-.cell .l {{ font-size:.85rem; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:#d3dbe6; line-height:1.25; }}
-.cell .v {{ font-size:1.2rem; font-weight:900; color:#fff; margin-top:.1rem; }}
+.cell .l {{ font-size:{_r(0.85)}; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:#d3dbe6; line-height:1.25; }}
+.cell .v {{ font-size:{_r(1.2)}; font-weight:900; color:#fff; margin-top:.1rem; }}
 .cell .v.big {{ font-size:1.6rem; }}
-.cell .s {{ font-size:.75rem; color:#d3dbe6; margin-top:.1rem; }}
+.cell .s {{ font-size:{_r(0.75)}; color:#d3dbe6; margin-top:.1rem; }}
 .mini {{ background:#0a1430; border:1px solid #1f3b6f; border-radius:10px; padding:.45rem .35rem; text-align:center; }}
-.mini .l {{ font-size:.85rem; letter-spacing:.04em; font-weight:800; text-transform:uppercase; color:#d3dbe6; }}
-.mini .v {{ font-size:1.05rem; font-weight:900; color:#fff; margin-top:.15rem; }}
+.mini .l {{ font-size:{_r(0.85)}; letter-spacing:.04em; font-weight:800; text-transform:uppercase; color:#d3dbe6; }}
+.mini .v {{ font-size:{_r(1.05)}; font-weight:900; color:#fff; margin-top:.15rem; }}
 
 /* tarjetas de la cabecera: mismo alto y contenido centrado */
 .card.igual {{ min-height:230px; display:flex; flex-direction:column; justify-content:center; }}
@@ -136,7 +148,7 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
   .prod {{ padding:.5rem .55rem; }} .prod .val {{ font-size:1.25rem; }} }}
 
 /* semáforos: color + símbolo, para que se entiendan sin depender del color */
-.celda-sem {{ display:block; padding:.2rem .25rem; border-radius:4px; font-weight:800; font-size:.8rem; }}
+.celda-sem {{ display:block; padding:.2rem .25rem; border-radius:4px; font-weight:800; font-size:{_r(0.8)}; }}
 .sem-v {{ background:{S['v'][0]}; color:{S['v'][1]}; }}
 .sem-a {{ background:{S['a'][0]}; color:{S['a'][1]}; }}
 .sem-r {{ background:{S['r'][0]}; color:{S['r'][1]}; }}
@@ -162,14 +174,14 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 .prod {{ background:linear-gradient(180deg,#f8fafc,#eef2f7); color:#0f172a; border-radius:12px; padding:.6rem .7rem; margin-bottom:0; }}
 .prod .n {{ display:inline-block; width:22px; height:22px; border-radius:6px; color:#fff; font-weight:800;
            text-align:center; line-height:22px; margin-right:.4rem; font-size:.78rem; }}
-.prod .name {{ font-weight:800; font-size:.82rem; letter-spacing:.02em; text-transform:uppercase; }}
+.prod .name {{ font-weight:800; font-size:{_r(0.82)}; letter-spacing:.02em; text-transform:uppercase; }}
 .prod .lleva {{ font-size:.75rem; font-weight:700; margin-top:.3rem; color:#3f4d63; }}
 .prod .val {{ font-size:1.45rem; font-weight:900; }}
 .prod .de {{ font-size:.95rem; font-weight:800; color:#3f4d63; }}
 .bar {{ position:relative; width:100%; height:11px; background:#94a3b8; border-radius:6px; overflow:hidden; margin:.35rem 0; }}
 .bar > div {{ height:100%; border-radius:6px; }}
 .bar > .marca {{ position:absolute; top:-3px; width:3px; height:17px; background:#0f172a; border-radius:1px; }}
-.prod .det {{ font-size:.76rem; color:#3f4d63; line-height:1.5; }}
+.prod .det {{ font-size:{_r(0.76)}; color:#3f4d63; line-height:1.5; }}
 .prod .det b {{ color:#0f172a; }}
 
 /* prioridades */
@@ -181,9 +193,9 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 /* tabla: cabecera fija y primera columna fija al hacer scroll lateral */
 .tabla-wrap {{ overflow-x:auto; max-height:70vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }}
 .tabla {{ width:100%; border-collapse:separate; border-spacing:0; font-size:.82rem; }}
-.tabla th {{ position:sticky; top:0; z-index:3; background:#0c1a38; text-align:center; font-size:.82rem;
+.tabla th {{ position:sticky; top:0; z-index:3; background:#0c1a38; text-align:center; font-size:{_r(0.82)};
             letter-spacing:.04em; text-transform:uppercase; color:#d3dbe6; padding:.4rem .3rem; border-bottom:1px solid #1f3b6f; }}
-.tabla td {{ text-align:center; padding:.3rem .3rem; border-bottom:1px solid #16294f; color:#fff; font-weight:700; font-size:.8rem; }}
+.tabla td {{ text-align:center; padding:.3rem .3rem; border-bottom:1px solid #16294f; color:#fff; font-weight:700; font-size:{_r(0.8)}; }}
 .tabla td.izq, .tabla th.izq {{ text-align:left; }}
 .tabla th.fija, .tabla td.fija {{ position:sticky; left:0; z-index:2; background:#0c1a38; }}
 .tabla th.fija {{ z-index:4; }}
@@ -231,7 +243,7 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 /* piso legible: nada por debajo de 12 px (0,75 rem) */
 .card [style*="font-size:.75rem"], .card [style*="font-size:.75rem"],
 .card [style*="font-size:.75rem"] {{ font-size:.75rem !important; }}
-.ref {{ font-size:.75rem; color:{C['texto2']}; text-align:center; line-height:1.4; }}
+.ref {{ font-size:{_r(0.75)}; color:{C['texto2']}; text-align:center; line-height:1.4; }}
 </style>
 """
 
@@ -277,11 +289,13 @@ def seccion(icono: str, titulo: str, sub: str = "", color: str = "") -> None:
 
 
 def color_cump(x: float) -> str:
+    """Verde / amarillo / rojo según los umbrales elegidos en Personalizar."""
     if x is None:
         return "t-gris"
-    if x >= 1.0:
+    a = A.cargar()
+    if x >= float(a.get("umbral_verde", 1.0)):
         return "t-verde"
-    if x >= 0.8:
+    if x >= float(a.get("umbral_amarillo", 0.8)):
         return "t-amarillo"
     return "t-rojo"
 
