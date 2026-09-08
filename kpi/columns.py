@@ -174,6 +174,65 @@ COLS = {
     "bw_bono":          (170, "$40.000 / $20.000"),
 }
 
+# ---------------------------------------------------------------------------
+# Hoja OT# — acumulados oficiales por tienda (bloque JEFES) y por coordinador.
+#
+# Tiene la misma estructura general que MOV-FIBRA, pero desde la columna 50 en
+# adelante está desplazada, por eso necesita su propio mapa.
+#   fila 6  -> encabezados del bloque JEFES;   filas 7..13 -> una por tienda + CTF
+#   fila 19 -> encabezados de COORDINADORES;   filas 20..  -> un coordinador por fila
+# ---------------------------------------------------------------------------
+OT_HOJA = "OT#"
+OT_HEADER_JEFES = 6
+OT_FIRST_JEFES = 7
+OT_HEADER_COORD = 19
+OT_FIRST_COORD = 20
+
+COLS_OT = {
+    "pdv": (2, "PDV"), "clave": (3, None), "ejecutivo": (4, "EJECUTIVO"),
+    "dias_trab": (5, "DÍAS TRABAJADOS"), "dias_rest": (6, "DÍAS RESTANTES"),
+    "atenciones": (7, "ATENCIONES"), "meta_rut": (8, "META RUT"),
+    "cump_rut": (9, "CUMP %"), "rut_proy": (10, "RUT PROY%"),
+    "mov_meta": (12, "META"), "mov_real": (13, "REAL"), "mov_falta": (14, "FALTA"),
+    "mov_deben": (15, "DEBEN LLEVAR"), "mov_cump": (16, "CUMP. TOTAL MOV"), "mov_conv": (17, "CONV. MÓVIL"),
+    "sus_meta": (18, "META"), "sus_real": (19, "REAL"), "sus_falta": (20, "FALTA"),
+    "sus_deben": (21, "DEBEN LLEVAR"), "sus_cump": (22, "CUMP. TOTAL SS"), "sus_conv": (23, "CONV. SUS"),
+    "mis_meta": (24, "META"), "mis_real": (25, "REAL"), "mis_falta": (26, "FALTA"), "mis_cump": (27, "CUMP. MIS"),
+    "l1_meta": (28, "META"), "l1_real": (29, "REAL"), "l1_falta": (30, "FALTA"), "l1_cump": (31, "CUMP. PRIMERA LÍNEA"),
+    "l2_meta": (32, "META"), "l2_real": (33, "REAL"), "l2_falta": (34, "FALTA"), "l2_cump": (35, "CUMP. SEGUNDA LÍNEA"),
+    "cvm_llegadas": (36, "LLEGADAS"), "cvm_ventas": (37, "VENTAS"), "cvm_50": (38, "CVM 50%"),
+    "l12_meta": (39, "META"), "l12_real": (40, "REAL"), "l12_falta": (41, "FALTA"), "l12_cump": (42, "CUMP. 1RAS + 2DAS"),
+    "porta_meta": (43, "META"), "porta_real": (44, "REAL"), "porta_falta": (45, "FALTA"),
+    "porta_deben": (46, "DEBEN LLEVAR"), "porta_cump": (47, "CUMP. PORTA"),
+    "porta_conv": (48, "CONV. PORTA"), "porta_peso": (49, "PESO PORTA"),
+    "fib_meta": (50, "META"), "fib_real": (51, "REAL"), "fib_falta": (52, "FALTA"),
+    "fib_deben": (53, "DEBEN LLEVAR"), "fib_cump": (54, "CUMP. FIBRA"),
+    "tv_meta": (55, "META"), "tv_real": (56, "REAL"), "tv_falta": (57, "FALTA"), "att_tv": (58, "ATT TV-FIBRA"),
+    "q_valid": (59, "VALIDAC."), "pct_valid": (60, "% VALIDAC."), "valid_inc": (61, "VALID. INCORRECTAS"),
+    "factibles": (62, "FACTIBLES"), "pct_fact": (63, "% FACT"), "conv_fibra": (64, "CONV. FIBRA"),
+    "factor_prod": (65, "FACTOR DE PROD."), "tasa_inst": (66, "TASA DE INSTALACIÓN"),
+    "fib_sol": (67, "FIBRA SOLICITUDES"), "fib_pend": (68, "FIBRAS PENDIENTES"),
+    "eq_meta": (73, "META"), "eq_tt": (74, "$ EQUIPOS TT VENDIDOS"), "eq_anul": (75, "$ EQUIPOS ANULADOS"),
+    "eq_real": (76, "REAL"), "eq_falta": (77, "FALTA"), "eq_deben": (78, "DEBEN LLEVAR"),
+    "eq_cump": (79, "CUMPL. EQ."), "eq_conv": (80, "CONV. EQUIPOS"), "eq_meta_q": (81, "META SMARTPHONES"),
+    "eq_q": (82, "Q EQ VENDIDOS"), "eq_con_linea": (83, "VENTA CON LINEA"), "att_eq_linea": (84, "ATT EQ - LINEA"),
+    "seg_meta": (85, "META"), "seg_real": (86, "REAL"), "seg_falta": (87, "FALTA"),
+    "seg_deben": (88, "DEBEN LLEVAR"), "seg_cump": (89, "CUMPL. SEG."), "att_seg": (90, "ATT EQ - SEGURO"),
+    "acc_meta": (91, "META"), "acc_tt": (92, "$ ACC TT VENDIDOS"), "acc_anul": (93, "$ ACC ANULADOS"),
+    "acc_real": (94, "REAL"), "acc_falta": (95, "FALTA"), "acc_deben": (96, "DEBEN LLEVAR"),
+    "acc_cump": (97, "CUMPL. ACC."), "acc_conv": (98, "CONV. ACC"),
+    "acc_meta_q": (99, "META Q ACC"), "acc_q": (100, "Q ACC VENDIDOS"),
+    "ene_usd": (101, "$ Energía"), "ene_q": (102, "Q ENERGÍA"), "ene_conv": (103, "CONV ENERGIA"), "ene_att": (104, "ATT ENERGÍA"),
+    "prot_usd": (105, "$ Proteccion"), "prot_q": (106, "Q PROTEC."), "prot_conv": (107, "CONV PROT."), "prot_att": (108, "ATT PROTEC."),
+    "prom_att_ene_prot": (109, "PROM ATT ENE - PROT"),
+    "epa_meta": (111, "META"), "epa": (112, "EPA"),
+    "ficha_l12": (133, "1RAS + 2DAS"), "ficha_port": (134, "PORT"), "ficha_fibra": (135, "FIBRA"),
+    "ficha_epa": (136, "EPA"), "ficha_eq": (137, "$ EQ"), "ficha_acc": (138, "$ ACC"),
+    "cump_ficha": (139, "TOTAL CUMP POND FICHA"), "tramo": (140, "TRAMO"), "proy_pond": (141, "% Proy Pond"),
+    "bf_cump_sus": (143, "CUMP SUSC"), "bf_cump_fib": (144, "CUMP FIBRA"),
+    "bf_pct": (145, "BONO FOCO %"), "bf_estado": (146, "BONO FOCO $$$"),
+}
+
 # Columnas de la fila 4 con los ESTÁNDARES mínimos usados por las alertas
 ESTANDARES = {
     "mov_conv":     17,   # conversión móvil mínima (26 %)

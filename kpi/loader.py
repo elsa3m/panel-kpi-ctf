@@ -111,6 +111,9 @@ class DatosMovFibra:
     epa_ejecutivo: pd.DataFrame
     encuestas: pd.DataFrame
     umbrales: dict = field(default_factory=dict)   # hoja CONV-CUMP: clave -> {"meta": x, "amarillo": y}
+    ot_tiendas: pd.DataFrame = field(default_factory=pd.DataFrame)   # hoja OT#, bloque JEFES
+    ot_total: dict = field(default_factory=dict)                     # hoja OT#, fila CTF
+    ot_coordinadores: pd.DataFrame = field(default_factory=pd.DataFrame)
     archivo: str = ""
     avisos: list = field(default_factory=list)
 
@@ -151,6 +154,57 @@ def _leer_mov_fibra(ws, avisos: list) -> tuple[pd.DataFrame, dict]:
         "estandares": {k: _num(rows[C.ROW_ESTANDARES - 1][col - 1]) for k, col in C.ESTANDARES.items()},
     }
     return df, params
+
+
+def _leer_ot(wb, avisos: list) -> tuple[pd.DataFrame, dict, pd.DataFrame]:
+    """
+    Hoja OT#: los acumulados oficiales por tienda.
+
+    Son los que usa la vista Jefe de Tienda. No se calculan sumando ejecutivos:
+    vienen ya consolidados en la planilla, con su propia ficha y su propio tramo.
+
+    Devuelve (tiendas, total_ctf, coordinadores).
+    """
+    if C.OT_HOJA not in wb.sheetnames:
+        avisos.append(f"El archivo no tiene la hoja '{C.OT_HOJA}': la vista Jefe de Tienda usará el consolidado de MOV-FIBRA.")
+        return pd.DataFrame(), {}, pd.DataFrame()
+
+    ws = wb[C.OT_HOJA]
+    rows = list(ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=True))
+
+    def bloque(header_row: int, first_row: int) -> pd.DataFrame:
+        header = rows[header_row - 1] if header_row - 1 < len(rows) else ()
+        for clave, (col, esperado) in C.COLS_OT.items():
+            if esperado is None:
+                continue
+            real = header[col - 1] if col - 1 < len(header) else None
+            if _norm(real) != _norm(esperado):
+                avisos.append(f"{C.OT_HOJA} col {col} ({clave}): se esperaba '{esperado}' y se encontró '{_txt(real)}'.")
+        registros = []
+        for r in rows[first_row - 1:]:
+            pdv = r[C.COLS_OT["pdv"][0] - 1] if C.COLS_OT["pdv"][0] - 1 < len(r) else None
+            if pdv in (None, ""):
+                break                      # el bloque termina en la primera fila vacía
+            reg = {}
+            for clave, (col, _) in C.COLS_OT.items():
+                v = r[col - 1] if col - 1 < len(r) else None
+                reg[clave] = _txt(v) if clave in ("pdv", "clave", "ejecutivo", "bf_estado") else _num(v)
+            registros.append(reg)
+        return pd.DataFrame(registros)
+
+    jefes = bloque(C.OT_HEADER_JEFES, C.OT_FIRST_JEFES)
+    coord = bloque(C.OT_HEADER_COORD, C.OT_FIRST_COORD)
+    if jefes.empty:
+        return jefes, {}, coord
+
+    jefes["pdv"] = jefes["pdv"].map(_pdv)
+    jefes["tienda"] = jefes["clave"].fillna("").replace("", pd.NA).fillna(jefes["ejecutivo"])
+    es_total = jefes["pdv"].str.upper().eq("CTF")
+    total = jefes[es_total].iloc[0].to_dict() if es_total.any() else {}
+    if not coord.empty:
+        coord["pdv"] = coord["pdv"].map(_pdv)
+        coord["tienda"] = coord["clave"].fillna("").replace("", pd.NA).fillna(coord["ejecutivo"])
+    return jefes[~es_total].reset_index(drop=True), total, coord
 
 
 def _leer_metas(wb) -> dict:
@@ -290,6 +344,7 @@ def cargar_mov_fibra(path: Path | str) -> DatosMovFibra:
     ejecutivos["activo"] = ejecutivos["mov_meta"].fillna(0) > 0
 
     total = df[es_total].iloc[0].to_dict() if es_total.any() else {}
+    ot_tiendas, ot_total, ot_coord = _leer_ot(wb, avisos)
 
     datos = DatosMovFibra(
         fecha_corte=params["fecha_corte"],
@@ -305,6 +360,9 @@ def cargar_mov_fibra(path: Path | str) -> DatosMovFibra:
         epa_ejecutivo=_leer_epa(wb),
         encuestas=_leer_encuestas(wb),
         umbrales=_leer_conv_cump(wb),
+        ot_tiendas=ot_tiendas,
+        ot_total=ot_total,
+        ot_coordinadores=ot_coord,
         archivo=path.name,
         avisos=avisos,
     )

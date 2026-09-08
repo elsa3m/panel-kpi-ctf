@@ -49,7 +49,7 @@ def test_emontilva():
     f = M.ficha(e, d.pesos)
     assert f["tramo"] == 0 and f["etiqueta"] == "BAJO CUMPLIMIENTO"
     prios = M.prioridades(M.alertas(e, d.estandares, d.avance_esperado))
-    assert [p["foco"] for p in prios] == ["MOVILIDAD", "FIBRA", "SEGUROS"]
+    assert [p["foco"] for p in prios] == ["MOVIL", "FIBRA", "SEGUROS"]
     assert len(d.ejecutivos[(d.ejecutivos["pdv"] == "5003") & d.ejecutivos["activo"]]) == 3
 
 

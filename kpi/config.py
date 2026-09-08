@@ -98,7 +98,7 @@ FIBRA_MINIMO_FICHA = 0.50    # REAL FIBRA (<50 % CUMP = 0 %)
 # ---------------------------------------------------------------------------
 # Alertas / prioridades del corte
 # ---------------------------------------------------------------------------
-FOCOS = ["MOVILIDAD", "FIBRA", "EQUIPOS", "SEGUROS", "ACCESORIOS"]
+FOCOS = ["MOVIL", "FIBRA", "EQUIPOS", "SEGUROS", "ACCESORIOS"]
 
 # Umbrales fijos de fibra que no vienen en la fila 4
 ESTANDAR_TASA_INSTALACION = 0.75

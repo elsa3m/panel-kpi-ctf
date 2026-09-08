@@ -7,3 +7,6 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# secretos locales (contraseña de la vista Jefe de Tienda)
+.streamlit/secrets.toml

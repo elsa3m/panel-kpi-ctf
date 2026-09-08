@@ -28,7 +28,14 @@ h1.titulo {{
   text-align:center; font-weight:900; letter-spacing:.06em; font-size:clamp(1.5rem, 4vw, 2.4rem);
   color:#fff; margin:.4rem 0 .3rem 0; text-shadow:0 0 18px rgba(34,211,238,.35);
 }}
-.logo-box {{ background:#fff; border-radius:10px; padding:.3rem .6rem; display:inline-block; }}
+/* placa blanca del logo (el archivo trae fondo blanco y texto oscuro) */
+.logo-box {{
+  background:#fff; border-radius:14px; padding:.6rem .9rem; display:block;
+  width:100%; max-width:310px; box-shadow:0 4px 16px rgba(0,0,0,.35);
+  border:1px solid rgba(255,255,255,.6); margin-bottom:.5rem;
+}}
+.logo-box img {{ display:block; width:100%; height:auto; }}
+@media (max-width: 640px) {{ .logo-box {{ max-width:220px; margin:0 auto; }} }}
 
 /* radio de vistas como botones */
 div[role="radiogroup"] {{ gap:.5rem; flex-wrap:wrap; }}
@@ -44,8 +51,16 @@ div[role="radiogroup"] > label:has(input:checked) {{
 }}
 div[role="radiogroup"] p {{ color:#fff; font-weight:800; }}
 
-/* selects */
-div[data-baseweb="select"] > div {{ background:#e5e7eb; color:#111; border-radius:10px; }}
+/* selects: fondo blanco y borde cian, para que se vea que son desplegables */
+div[data-baseweb="select"] > div {{
+  background:#ffffff !important; color:#0f172a !important; border-radius:10px;
+  border:2px solid {C['cyan']} !important; box-shadow:0 0 10px rgba(34,211,238,.25);
+  font-weight:700; font-size:1rem;
+}}
+div[data-baseweb="select"] div, div[data-baseweb="select"] span,
+div[data-baseweb="select"] svg {{ color:#0f172a !important; fill:#0f172a !important; }}
+div[data-baseweb="popover"] li {{ background:#ffffff; color:#0f172a; font-weight:600; }}
+div[data-baseweb="popover"] li:hover {{ background:#cffafe; color:#0f172a; }}
 label[data-testid="stWidgetLabel"] p {{ color:#fff; font-weight:800; font-size:1.05rem; }}
 
 /* expander y avisos */
@@ -75,10 +90,10 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 .card.rosa {{ border-color:#f472b6; background:linear-gradient(180deg,#2a0f24 0%, #1a0a18 100%); }}
 .card.light {{ background:linear-gradient(180deg,#f8fafc,#e2e8f0); color:#0f172a; border-color:#cbd5e1; }}
 
-.card .h {{ font-size:.8rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#d3dbe6; text-align:center; }}
+.card .h {{ font-size:.92rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#d3dbe6; text-align:center; }}
 .card .big {{ font-size:clamp(1.45rem, 2vw, 2.1rem); font-weight:900; text-align:center; line-height:1.1; margin:.25rem 0; color:#fff; white-space:nowrap; }}
 .card .mid {{ font-size:clamp(1.05rem, 1.4vw, 1.45rem); font-weight:900; text-align:center; color:#fff; white-space:nowrap; }}
-.card .sub {{ font-size:.8rem; color:#d3dbe6; text-align:center; font-weight:600; line-height:1.4; }}
+.card .sub {{ font-size:.85rem; color:#d3dbe6; text-align:center; font-weight:600; line-height:1.4; }}
 .card .sec {{ font-size:clamp(1.05rem, 1.6vw, 1.35rem); font-weight:900; color:#fff; letter-spacing:.03em; }}
 .card .sec small {{ font-size:.75rem; color:{C['cyan']}; font-weight:800; }}
 .t-cyan {{ color:{C['cyan']} !important; }}
@@ -96,13 +111,17 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 .g4 {{ grid-template-columns:repeat(4,1fr); }}
 .g5 {{ grid-template-columns:repeat(5,1fr); }}
 .cell {{ text-align:center; padding:.35rem .25rem; border-bottom:1px solid #1f3b6f; }}
-.cell .l {{ font-size:.75rem; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:#d3dbe6; line-height:1.25; }}
+.cell .l {{ font-size:.85rem; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:#d3dbe6; line-height:1.25; }}
 .cell .v {{ font-size:1.2rem; font-weight:900; color:#fff; margin-top:.1rem; }}
 .cell .v.big {{ font-size:1.6rem; }}
 .cell .s {{ font-size:.75rem; color:#d3dbe6; margin-top:.1rem; }}
 .mini {{ background:#0a1430; border:1px solid #1f3b6f; border-radius:10px; padding:.45rem .35rem; text-align:center; }}
-.mini .l {{ font-size:.75rem; letter-spacing:.04em; font-weight:800; text-transform:uppercase; color:#d3dbe6; }}
-.mini .v {{ font-size:.95rem; font-weight:900; color:#fff; margin-top:.15rem; }}
+.mini .l {{ font-size:.85rem; letter-spacing:.04em; font-weight:800; text-transform:uppercase; color:#d3dbe6; }}
+.mini .v {{ font-size:1.05rem; font-weight:900; color:#fff; margin-top:.15rem; }}
+
+/* tarjetas de la cabecera: mismo alto y contenido centrado */
+.card.igual {{ min-height:230px; display:flex; flex-direction:column; justify-content:center; }}
+@media (max-width: 640px) {{ .card.igual {{ min-height:0; }} }}
 
 /* pill */
 .pill {{ display:inline-block; border:1.5px solid {C['cyan']}; border-radius:999px; padding:.25rem .8rem;
@@ -162,7 +181,7 @@ summary p {{ color:#fff !important; font-weight:800; text-transform:uppercase; f
 /* tabla: cabecera fija y primera columna fija al hacer scroll lateral */
 .tabla-wrap {{ overflow-x:auto; max-height:70vh; overflow-y:auto; -webkit-overflow-scrolling:touch; }}
 .tabla {{ width:100%; border-collapse:separate; border-spacing:0; font-size:.82rem; }}
-.tabla th {{ position:sticky; top:0; z-index:3; background:#0c1a38; text-align:center; font-size:.75rem;
+.tabla th {{ position:sticky; top:0; z-index:3; background:#0c1a38; text-align:center; font-size:.82rem;
             letter-spacing:.04em; text-transform:uppercase; color:#d3dbe6; padding:.4rem .3rem; border-bottom:1px solid #1f3b6f; }}
 .tabla td {{ text-align:center; padding:.3rem .3rem; border-bottom:1px solid #16294f; color:#fff; font-weight:700; font-size:.8rem; }}
 .tabla td.izq, .tabla th.izq {{ text-align:left; }}

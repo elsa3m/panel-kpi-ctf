@@ -179,7 +179,7 @@ def ficha(e, pesos_ficha: dict) -> dict:
 def alertas(e, estandares: dict, avance_esperado: float) -> list[dict]:
     """
     Genera la lista de alertas del ejecutivo. Cada alerta tiene:
-    foco (MOVILIDAD/FIBRA/EQUIPOS/SEGUROS/ACCESORIOS), texto, severidad (1..3).
+    foco (MOVIL/FIBRA/EQUIPOS/SEGUROS/ACCESORIOS), texto, severidad (1..3).
     """
     out = []
 
@@ -196,14 +196,14 @@ def alertas(e, estandares: dict, avance_esperado: float) -> list[dict]:
         if v(valor) < std:
             out.append({"foco": foco, "sev": sev, "texto": f"{etiqueta} bajo estándar · mínimo {pct(std, 0)}"})
 
-    # MOVILIDAD
-    bajo_corte("MOVILIDAD", "Total móvil", e.get("mov_real"), e.get("mov_deben"))
-    bajo_corte("MOVILIDAD", "Suscripción", e.get("sus_real"), e.get("sus_deben"))
-    bajo_corte("MOVILIDAD", "Portabilidad", e.get("porta_real"), e.get("porta_deben"))
-    bajo_estandar("MOVILIDAD", "Conversión móvil", e.get("mov_conv"), "mov_conv")
-    bajo_estandar("MOVILIDAD", "Conversión suscripción", e.get("sus_conv"), "sus_conv")
-    bajo_estandar("MOVILIDAD", "Conversión portabilidad", e.get("porta_conv"), "porta_conv")
-    bajo_estandar("MOVILIDAD", "Peso portabilidad", e.get("porta_peso"), "porta_peso", sev=1)
+    # MOVIL
+    bajo_corte("MOVIL", "Total móvil", e.get("mov_real"), e.get("mov_deben"))
+    bajo_corte("MOVIL", "Suscripción", e.get("sus_real"), e.get("sus_deben"))
+    bajo_corte("MOVIL", "Portabilidad", e.get("porta_real"), e.get("porta_deben"))
+    bajo_estandar("MOVIL", "Conversión móvil", e.get("mov_conv"), "mov_conv")
+    bajo_estandar("MOVIL", "Conversión suscripción", e.get("sus_conv"), "sus_conv")
+    bajo_estandar("MOVIL", "Conversión portabilidad", e.get("porta_conv"), "porta_conv")
+    bajo_estandar("MOVIL", "Peso portabilidad", e.get("porta_peso"), "porta_peso", sev=1)
     # FIBRA
     bajo_corte("FIBRA", "Fibra", e.get("fib_real"), e.get("fib_deben"))
     bajo_estandar("FIBRA", "Conversión fibra", e.get("conv_fibra"), "conv_fibra")
@@ -226,7 +226,7 @@ def alertas(e, estandares: dict, avance_esperado: float) -> list[dict]:
     return out
 
 
-PESO_FOCO = {"MOVILIDAD": 0.42, "FIBRA": 0.18, "EQUIPOS": 0.12, "SEGUROS": 0.10, "ACCESORIOS": 0.10}
+PESO_FOCO = {"MOVIL": 0.42, "FIBRA": 0.18, "EQUIPOS": 0.12, "SEGUROS": 0.10, "ACCESORIOS": 0.10}
 
 
 def prioridades(lista_alertas: list[dict], n: int = 3) -> list[dict]:

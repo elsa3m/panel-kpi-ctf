@@ -98,6 +98,67 @@ vistas, sin errores.
 
 ---
 
+# Segunda ronda de ajustes
+
+## 9. Acumulados por tienda desde la hoja OT#
+
+La vista **Jefe de Tienda** y la vista **Tiendas / CTF** ahora toman los
+acumulados de la pestaña **OT#** del Drive, que es donde están consolidados
+oficialmente, en vez de sumar o promediar a los ejecutivos.
+
+Esto resolvió de paso una diferencia que estaba pendiente: el total CTF que yo
+calculaba promediando ejecutivos daba 21,78 % / 53,22 %, y el panel original
+mostraba 25,74 % / 90,23 %. Esos números salen de OT#. Ahora coinciden.
+
+Cada vista dice de dónde viene el dato. Si algún mes el Excel no trae la hoja
+OT#, el panel avisa y usa el consolidado de MOV-FIBRA.
+
+## 10. Bloqueo de la vista Jefe de Tienda
+
+La vista pide contraseña. **No está en el código**: el repositorio es público y
+una clave escrita ahí quedaría a la vista de cualquiera. Va en los *secrets* de
+Streamlit:
+
+1. **share.streamlit.io** → tu app → **Settings** → **Secrets**
+2. Escribe: `clave_jefes = "la-clave-que-elijas"` y guarda
+3. La app se reinicia sola
+
+Para probar en tu computador: crea `.streamlit/secrets.toml` en la carpeta del
+proyecto con esa misma línea. Ese archivo está en `.gitignore`, así que nunca se
+sube a GitHub.
+
+Mientras no la configures, la vista muestra estas mismas instrucciones. Adentro
+hay un botón **🔒 Bloquear vista** para cerrarla.
+
+## 11. Ajustes visuales
+
+- **Logo**: se usa el archivo nítido, montado sobre una placa blanca redondeada.
+  El PNG trae fondo blanco y el texto "tecnología" casi negro, así que sobre el
+  fondo oscuro del panel desaparecería; la placa mantiene los colores de marca.
+  Para cambiarlo más adelante basta reemplazar `assets/logo.png`.
+- **Casillas de Tienda y Ejecutivo**: fondo blanco, borde cian y letra más
+  grande. Ahora se ve que son desplegables.
+- **Las cuatro tarjetas de la cabecera** (PDV, ejecutivo, % Real, % Proyección)
+  quedaron del mismo alto y ocupando el mismo espacio.
+- **Títulos más grandes**: los de las tarjetas de 0,80 a 0,92 rem; los de las
+  mini-tarjetas y celdas de 0,75 a 0,85 rem.
+- **MOVILIDAD → MOVIL** en todo el panel.
+- **PROM. CTF** eliminada de la comparación contra pares. Queda "Puesto en CTF",
+  que dice lo mismo de forma más útil.
+- **Conv. SUS** agregada a la comparación contra pares (y también Conv. acc).
+
+## 12. Fibra Ejecutivos reorganizada
+
+Ahora se lee como una secuencia, no como un montón de tarjetas sueltas:
+
+1. 🎯 **Meta del mes** — cuánto falta para cerrar, con una línea directa:
+   "▼ Va 2 instalaciones bajo el corte"
+2. 📦 **Sus órdenes** — en qué estado está cada solicitud
+3. 🔎 **Dónde se pierden** — pendientes, rechazos y reagendamientos
+4. 📋 **Detalle** — la tabla completa, para quien la necesite
+
+---
+
 ## Qué NO cambió
 
 - Ningún cálculo de negocio: tramos, bonos, ficha ponderada, alertas.

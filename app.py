@@ -59,11 +59,38 @@ def cargar(nombre: str):
 # ---------------------------------------------------------------------------
 # cabecera
 # ---------------------------------------------------------------------------
-logo = cfg.ASSETS_DIR / "logo.png"
+def buscar_logo():
+    """
+    Logo de la cabecera. Basta con dejar el archivo en assets/ con cualquiera de
+    estos nombres; se usa el primero que exista. Para cambiarlo, reemplaza el
+    archivo (idealmente PNG con fondo transparente, de 600 px de ancho o más).
+    """
+    for nombre in ("logo.png", "logo.jpg", "logo.jpeg", "logo.webp", "logo.svg"):
+        p = cfg.ASSETS_DIR / nombre
+        if p.exists():
+            return p
+    return None
+
+
+def logo_html(p) -> str:
+    """
+    El logo va sobre una placa blanca redondeada: el archivo trae fondo blanco y
+    el texto 'tecnología' es casi negro, así que sobre el fondo oscuro del panel
+    desaparecería. La placa mantiene los colores de marca tal como son.
+    """
+    import base64
+    mimes = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".webp": "image/webp", ".svg": "image/svg+xml"}
+    b64 = base64.b64encode(p.read_bytes()).decode()
+    return (f'<div class="logo-box"><img src="data:{mimes.get(p.suffix.lower(), "image/png")};base64,{b64}" '
+            f'alt="CTF Tecnología"></div>')
+
+
+logo = buscar_logo()
 c1, c2, c3 = st.columns([1, 2.4, 1])
 with c1:
-    if logo.exists():
-        st.image(str(logo), width=260)
+    if logo:
+        md(logo_html(logo))
 with c2:
     md('<h1 class="titulo">PANEL KPI CTF</h1>')
 
@@ -194,15 +221,35 @@ def deben(row, clave_meta: str, avance: float) -> float:
     return v(row.get(clave_meta)) * avance
 
 
+def fila_ot(pdv: str) -> dict | None:
+    """
+    Acumulado oficial de la hoja OT# para una tienda ('CTF' para la empresa).
+
+    Es la fuente correcta para los totales por tienda: vienen consolidados en la
+    planilla, con su propia ficha y su propio tramo. Devuelve None si el Excel
+    del mes no trae la hoja OT#, y el panel cae al consolidado de MOV-FIBRA.
+    """
+    if str(pdv).upper() == "CTF":
+        return dict(mov.ot_total) if mov.ot_total else None
+    if mov.ot_tiendas is None or mov.ot_tiendas.empty:
+        return None
+    f_ = mov.ot_tiendas[mov.ot_tiendas["pdv"].astype(str) == str(pdv)]
+    return f_.iloc[0].to_dict() if not f_.empty else None
+
+
+ORIGEN_OT = "Acumulados oficiales de la hoja <b>OT#</b> del Drive."
+ORIGEN_MOV = "Acumulados de la hoja <b>MOV-FIBRA</b> (este Excel no trae la hoja OT#)."
+
+
 # ===========================================================================
 # BLOQUES REUTILIZABLES (los usan Vista Ejecutivo y Vista Tiendas)
 # ===========================================================================
 def bloque_cabecera(row, pdv_txt: str, sub_pdv: str, titulo_peq: str, nombre_grande: str, minis: list[str] | None,
                     lema: str, f: dict, ultima_fibra: dict | None, clave: str = ""):
-    c1, c2, c3, c4 = st.columns([1.1, 3.2, 1, 1])
+    c1, c2, c3, c4 = st.columns([1.25, 2.9, 1.25, 1.25])
     with c1:
         ui.card(f'<div class="mid">🏬 {h(pdv_txt)}</div><div class="sub t-cyan" style="font-weight:800;font-size:1rem">{h(sub_pdv)}</div>'
-                f'<div class="hr"></div><div class="h t-cyan">📅 CORTE</div><div class="mid">{fecha_txt(mov.fecha_corte)}</div>', "cyan")
+                f'<div class="hr"></div><div class="h t-cyan">📅 CORTE</div><div class="mid">{fecha_txt(mov.fecha_corte)}</div>', "cyan igual")
     with c2:
         cuerpo = (f'<div class="ancho-total"></div><div class="h">{h(titulo_peq)}</div>'
                   f'<div class="big t-cyan" style="font-size:clamp(1.4rem,2.6vw,2.2rem)">{h(nombre_grande)}</div>')
@@ -210,7 +257,7 @@ def bloque_cabecera(row, pdv_txt: str, sub_pdv: str, titulo_peq: str, nombre_gra
             cuerpo += grid(minis, 4)
         if lema:
             cuerpo += f'<div class="sub" style="font-size:1.4rem;font-style:italic;color:#e5e7eb">{h(lema)}</div>'
-        ui.card(cuerpo, "")
+        ui.card(cuerpo, "igual")
         if ultima_fibra is not None:
             if ultima_fibra["ultima"]:
                 cuando = "Hoy" if ultima_fibra["hoy"] else (f"Hace {ultima_fibra['dias']} días" if ultima_fibra["dias"] is not None else "")
@@ -227,7 +274,7 @@ def bloque_cabecera(row, pdv_txt: str, sub_pdv: str, titulo_peq: str, nombre_gra
                 f'{tendencia(clave, "cump_ficha") if clave else ""}'
                 f'<div class="mid {col_real}" style="font-size:1.15rem;margin-top:.35rem">TRAMO {f["tramo"]}</div>'
                 f'<div class="sub {col_real}"><b>{f["etiqueta"]}</b></div>',
-                "rojo" if col_real == "t-rojo" else ("amarillo" if col_real == "t-amarillo" else "verde"))
+                ("rojo" if col_real == "t-rojo" else ("amarillo" if col_real == "t-amarillo" else "verde")) + " igual")
     with c4:
         ui.card(f'<div class="h">% PROYECCIÓN</div>'
                 f'<div class="big {col_proy}" style="margin:.5rem 0">{M.pct_topado(f["proy"], cfg.TOPE_PROYECCION_VISUAL, 2)}</div>'
@@ -235,7 +282,7 @@ def bloque_cabecera(row, pdv_txt: str, sub_pdv: str, titulo_peq: str, nombre_gra
                 f'<div class="mid {col_proy}" style="font-size:1.15rem;margin-top:.35rem">TRAMO {f["tramo_proy"]}</div>'
                 f'<div class="sub {col_proy}"><b>{f["etiqueta_proy"] if f["tramo_proy"] == 0 else "TRAMO " + str(f["tramo_proy"])}</b></div>'
                 f'<div class="ref"><span class="{conf["clase"]}">{conf["icono"]} confianza {conf["nivel"]}</span> · {h(conf["texto"])}</div>',
-                "rojo" if col_proy == "t-rojo" else ("amarillo" if col_proy == "t-amarillo" else "verde"))
+                ("rojo" if col_proy == "t-rojo" else ("amarillo" if col_proy == "t-amarillo" else "verde")) + " igual")
 
 
 def bloque_indicadores(row, f: dict, prom_pares: float | None):
@@ -259,7 +306,7 @@ def bloque_indicadores(row, f: dict, prom_pares: float | None):
 
 def bloque_movilidad(row, avance: float):
     md(f'<div class="card" style="padding:.6rem 1.1rem;display:flex;justify-content:space-between;align-items:center">'
-       f'<span class="sec">📱 ENTEL – MOVILIDAD</span><span class="pill">📍 AVANCE ESPERADO: {pct(avance, 1)}</span></div>')
+       f'<span class="sec">📱 ENTEL – MOVIL</span><span class="pill">📍 AVANCE ESPERADO: {pct(avance, 1)}</span></div>')
     items = [
         (1, "Total móvil", "mov", "#2563eb", "mov_conv", None),
         (2, "Suscripción", "sus", "#0d9488", "sus_conv", None),
@@ -455,8 +502,9 @@ def bloque_epa_encuestas(codigo: str):
 
 
 KPIS_PARES = [("% Real ficha", "cump_ficha", 2), ("Atenciones", "atenciones", 0), ("Conv. móvil", "mov_conv", 1),
-              ("Conv. porta", "porta_conv", 1), ("Conv. fibra", "conv_fibra", 1), ("Att seguro", "att_seg", 1),
-              ("Conv. equipos", "eq_conv", 1), ("EPA", "epa", 1)]
+              ("Conv. sus", "sus_conv", 1), ("Conv. porta", "porta_conv", 1), ("Conv. fibra", "conv_fibra", 1),
+              ("Att seguro", "att_seg", 1), ("Conv. equipos", "eq_conv", 1), ("Conv. acc", "acc_conv", 1),
+              ("EPA", "epa", 1)]
 
 
 def comparacion_pares(row, ej_tienda: pd.DataFrame, ej_ctf: pd.DataFrame, codigo: str):
@@ -466,7 +514,6 @@ def comparacion_pares(row, ej_tienda: pd.DataFrame, ej_ctf: pd.DataFrame, codigo
         for etiqueta, k, dec in KPIS_PARES:
             val = v(row.get(k))
             m_t = ej_tienda[k].mean() if k in ej_tienda.columns and not ej_tienda.empty else None
-            m_c = ej_ctf[k].mean() if k in ej_ctf.columns and not ej_ctf.empty else None
             fmt = (lambda x: entero(x)) if k == "atenciones" else (lambda x: pct(x, dec))
             serie_ctf = pd.to_numeric(ej_ctf[k], errors="coerce").dropna() if k in ej_ctf.columns else pd.Series(dtype=float)
             if len(serie_ctf) > 1:
@@ -478,12 +525,11 @@ def comparacion_pares(row, ej_tienda: pd.DataFrame, ej_ctf: pd.DataFrame, codigo
             dif_t = (val - m_t) if m_t is not None and pd.notna(m_t) else None
             factor = 1 if k == "atenciones" else 100
             filas.append([h(etiqueta), fmt(val), fmt(m_t) if m_t is not None else "—",
-                          fmt(m_c) if m_c is not None else "—",
                           ui.delta(dif_t * factor, "" if k == "atenciones" else " pts",
                                    0 if k == "atenciones" else 1) if dif_t is not None else "—",
                           f'<span class="celda-sem rango {cls}">{pos}</span>' if cls else pos,
                           tendencia(codigo, k) or "—"])
-        ui.card(ui.tabla(["KPI", "Este ejecutivo", "Prom. tienda", "Prom. CTF", "vs. tienda", "Puesto en CTF", "vs. corte anterior"],
+        ui.card(ui.tabla(["KPI", "Este ejecutivo", "Prom. tienda", "vs. tienda", "Puesto en CTF", "vs. corte anterior"],
                          filas, izq=1), "cyan")
 
 
@@ -672,26 +718,21 @@ def vista_tiendas():
     sel = st.selectbox("🏬 Seleccionar tienda / empresa", opciones, format_func=lambda p: etiquetas[p])
 
     if sel == "CTF":
-        row = pd.Series(mov.total)
+        row = pd.Series(fila_ot("CTF") or mov.total)
         ej = ejecutivos
         titulo, pdv_txt, sub_pdv, nombre_grande = "EMPRESA TOTAL", "PDV CTF", "CTF EMPRESA TOTAL", "CTF EMPRESA TOTAL"
         escucha_clave, escucha_pdv = "CTF", ""
     else:
-        row = tiendas[tiendas["pdv"] == sel].iloc[0]
+        row = pd.Series(fila_ot(sel) or tiendas[tiendas["pdv"] == sel].iloc[0].to_dict())
         ej = ejecutivos[ejecutivos["pdv"] == sel]
         titulo, pdv_txt, sub_pdv, nombre_grande = "TIENDA", f"PDV {sel}", nombre_tienda[sel], nombre_tienda[sel]
         escucha_clave, escucha_pdv = sel, sel
 
-    # cumplimiento ponderado de la tienda / empresa = promedio de sus ejecutivos
-    f = {
-        "cump": ej["cump_ficha"].mean() if not ej.empty else 0.0,
-        "proy": ej["proy_pond"].mean() if not ej.empty else 0.0,
-    }
-    f["tramo"], f["tramo_proy"] = cfg.tramo_de(f["cump"]), cfg.tramo_de(f["proy"])
-    f["etiqueta"], f["etiqueta_proy"] = cfg.etiqueta_cumplimiento(f["cump"]), cfg.etiqueta_cumplimiento(f["proy"])
+    f = M.ficha(row, mov.pesos)
     avance = avance_calendario(row)
 
-    md(f'<div class="card" style="padding:.6rem 1rem">Vista: <b>{h(nombre_grande)}</b> · Ejecutivos: <b>{len(ej)}</b> · Corte: <b>{fecha_txt(mov.fecha_corte)}</b></div>')
+    md(f'<div class="card" style="padding:.6rem 1rem">Vista: <b>{h(nombre_grande)}</b> · Ejecutivos: <b>{len(ej)}</b> · '
+       f'Corte: <b>{fecha_txt(mov.fecha_corte)}</b> · {ORIGEN_OT if fila_ot(sel) else ORIGEN_MOV}</div>')
     bloque_cabecera(row, pdv_txt, sub_pdv, titulo, nombre_grande, None, "¡Vamos por más! Cada venta cuenta.", f, None,
                     clave="CTF" if sel == "CTF" else sel)
     bloque_indicadores(row, f, None)
@@ -763,14 +804,94 @@ def tablero_ejecutivos(ej: pd.DataFrame, f: dict):
 # ===========================================================================
 # VISTA 3 · JEFE DE TIENDA
 # ===========================================================================
-def vista_jefe():
-    pdv = st.selectbox("🏬 Tienda", list(etiqueta_tienda.keys()), format_func=lambda p: etiqueta_tienda[p])
-    t = tiendas[tiendas["pdv"] == pdv].iloc[0]
-    ej = ejecutivos[ejecutivos["pdv"] == pdv]
-    tienda = t["tienda"]
-    avance = avance_calendario(t)
+CLAVE_SESION = "jefe_desbloqueado"
 
-    md(f'<div class="card" style="padding:.6rem 1rem">Tienda: <b>{h(tienda)}</b> · PDV {h(pdv)} · Ejecutivos activos: <b>{len(ej)}</b> · Corte: <b>{fecha_txt(mov.fecha_corte)}</b></div>')
+
+def clave_configurada() -> str:
+    """
+    Contraseña de la vista Jefe de Tienda.
+
+    Se lee de los *secrets* de Streamlit, nunca del código: el repositorio es
+    público, así que una clave escrita aquí quedaría a la vista de cualquiera.
+    En Streamlit Cloud: Settings → Secrets → clave_jefes = "loquesea".
+    En local: crear .streamlit/secrets.toml con esa misma línea.
+    """
+    try:
+        return str(st.secrets.get("clave_jefes", "") or "")
+    except Exception:  # noqa: BLE001  no hay secrets.toml en local
+        return ""
+
+
+def bloqueo_jefe() -> bool:
+    """Devuelve True si la vista está desbloqueada."""
+    if st.session_state.get(CLAVE_SESION):
+        return True
+    clave = clave_configurada()
+    if not clave:
+        ui.card('<div class="sec">🔒 VISTA RESERVADA</div>'
+                '<div class="sub" style="text-align:left">Esta vista está protegida y todavía no tiene contraseña configurada.<br><br>'
+                '<b>Para activarla:</b><br>'
+                '1. Entra a <b>share.streamlit.io</b> → tu app → <b>Settings</b> → <b>Secrets</b>.<br>'
+                '2. Escribe una línea: <code>clave_jefes = "la-clave-que-elijas"</code> y guarda.<br>'
+                '3. La app se reinicia sola y aquí aparecerá el cuadro para escribirla.<br><br>'
+                'Para probar en tu computador, crea el archivo <code>.streamlit/secrets.toml</code> '
+                'en la carpeta del proyecto con esa misma línea. Ese archivo está excluido del '
+                'repositorio, así que la clave nunca se sube a GitHub.</div>', "amarillo")
+        return False
+
+    ui.card('<div class="sec">🔒 VISTA RESERVADA · JEFE DE TIENDA</div>'
+            '<div class="sub">Esta vista muestra los acumulados por tienda y el detalle de cada ejecutivo. '
+            'Escribe la contraseña para entrar.</div>', "cyan")
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        ingresada = st.text_input("Contraseña", type="password", key="clave_jefe_input",
+                                  label_visibility="collapsed", placeholder="Contraseña")
+    with c2:
+        entrar = st.button("🔓 Entrar", key="btn_jefe")
+    if entrar or ingresada:
+        if ingresada == clave:
+            st.session_state[CLAVE_SESION] = True
+            st.rerun()
+        elif entrar:
+            st.error("Contraseña incorrecta.")
+    return False
+
+
+def vista_jefe():
+    if not bloqueo_jefe():
+        return
+    b1, b2 = st.columns([3, 1])
+    with b2:
+        if st.button("🔒 Bloquear vista", key="btn_bloquear"):
+            st.session_state[CLAVE_SESION] = False
+            st.rerun()
+    with b1:
+        pdv = st.selectbox("🏬 Tienda", list(etiqueta_tienda.keys()), format_func=lambda p: etiqueta_tienda[p])
+    ot = fila_ot(pdv)
+    t = pd.Series(ot) if ot else tiendas[tiendas["pdv"] == pdv].iloc[0]
+    ej = ejecutivos[ejecutivos["pdv"] == pdv]
+    tienda = nombre_tienda.get(pdv, "")
+    avance = avance_calendario(t)
+    ft = M.ficha(t, mov.pesos)
+
+    md(f'<div class="card" style="padding:.6rem 1rem">Tienda: <b>{h(tienda)}</b> · PDV {h(pdv)} · Ejecutivos activos: <b>{len(ej)}</b> · '
+       f'Corte: <b>{fecha_txt(mov.fecha_corte)}</b> · {ORIGEN_OT if ot else ORIGEN_MOV}</div>')
+
+    # --- acumulado oficial de la tienda -------------------------------------
+    col_r = ui.color_cump(ft["cump"])
+    col_p = ui.color_cump(ft["proy"])
+    conf = M.confianza_proyeccion(t.get("dias_trab"))
+    k = st.columns(6)
+    tarjetas = [("📊 % Real tienda", pct(ft["cump"]), f'Tramo {ft["tramo"]} · {ft["etiqueta"]}', col_r),
+                ("🚀 % Proyección", M.pct_topado(ft["proy"], cfg.TOPE_PROYECCION_VISUAL, 2),
+                 f'{conf["icono"]} confianza {conf["nivel"]}', col_p),
+                ("👤 Atenciones", entero(t.get("atenciones")), "Acumulado de la tienda", "t-cyan"),
+                ("📅 Días restantes", entero(t.get("dias_rest")), "Del periodo", "t-cyan"),
+                ("📱 Cump. móvil", pct(t.get("mov_cump"), 1), f'Conv. {pct(t.get("mov_conv"), 1)}', ui.color_cump(v(t.get("mov_cump")) / max(avance, 1e-9))),
+                ("📶 Cump. fibra", pct(t.get("fib_cump"), 1), f'Conv. {pct(t.get("conv_fibra"), 1)}', ui.color_cump(v(t.get("fib_cump")) / max(avance, 1e-9)))]
+    for col, (tt, val, sub, cl) in zip(k, tarjetas):
+        with col:
+            ui.kpi(tt, val, sub, cl, "")
     ui.seccion("👥", "EJECUTIVOS DE LA TIENDA", "semáforo del corte")
     filas = []
     for _, r in ej.sort_values("cump_ficha", ascending=False).iterrows():
@@ -1080,32 +1201,49 @@ def vista_fibra_ejecutivos():
     meta, real = v(r.get("meta_fibra")) or v(e.get("fib_meta")), v(r.get("real_fibra"))
     cump = real / meta if meta else 0.0
     proy = cump / avance if avance else 0.0
+    conf = M.confianza_proyeccion(e.get("dias_trab"))
+
+    # ---- 1. ¿Va bien con la meta? ------------------------------------------
+    ui.seccion("🎯", "META DEL MES", "cuánto falta para cerrar")
     c = st.columns(6)
-    datos = [("🎯 Meta", entero(meta), "Meta fibra", "t-cyan"),
+    datos = [("🎯 Meta", entero(meta), "Instalaciones del mes", "t-cyan"),
              ("✅ Lleva", entero(real), "Instaladas válidas", "t-verde"),
-             ("📉 Faltan", entero(meta - real), "Para llegar a meta", "t-rojo"),
-             ("🕐 Debe llevar", str(M.ceil_pos(e.get("fib_deben"))), "Según el corte", "t-cyan"),
-             ("📊 Cumpl.", pct(cump, 1), "Real / meta", ui.color_cump(cump / max(avance, 1e-9))),
-             ("🚀 Proyección", M.pct_topado(proy, cfg.TOPE_PROYECCION_VISUAL), "Cierre proyectado", ui.color_cump(proy))]
+             ("📉 Faltan", entero(max(0, meta - real)), "Para llegar a meta", "t-rojo"),
+             ("🕐 Debe llevar hoy", str(M.ceil_pos(e.get("fib_deben"))), "Según el avance del corte", "t-cyan"),
+             ("📊 Cumplimiento", pct(cump, 1), "Real / meta", ui.color_cump(cump / max(avance, 1e-9))),
+             ("🚀 Proyección", M.pct_topado(proy, cfg.TOPE_PROYECCION_VISUAL),
+              f'{conf["icono"]} confianza {conf["nivel"]}', ui.color_cump(proy))]
     for col, (t, val, sub, cl) in zip(c, datos):
         with col:
             ui.kpi(t, val, sub, cl, "")
+    atraso = M.ceil_pos(e.get("fib_deben")) - real
+    if atraso > 0:
+        md(f'<div class="card rojo" style="padding:.55rem 1rem"><b class="t-rojo">▼ Va {M.entero(atraso)} instalación(es) '
+           f'bajo el corte.</b> <span class="t-gris">Al ritmo de hoy cierra el mes en '
+           f'{M.pct_topado(proy, cfg.TOPE_PROYECCION_VISUAL)} de la meta.</span></div>')
+    else:
+        md('<div class="card verde" style="padding:.55rem 1rem"><b class="t-verde">▲ Va al día o por sobre el corte.</b></div>')
 
+    # ---- 2. ¿En qué estado están sus órdenes? -------------------------------
+    ui.seccion("📦", "SUS ÓRDENES", "en qué va cada solicitud")
     bloque_ordenes(s)
-    bloque_reagendamientos(s)
 
-    ui.seccion("📌", "SEGUIMIENTO OPERATIVO")
+    # ---- 3. ¿Dónde se está perdiendo? --------------------------------------
+    ui.seccion("🔎", "DÓNDE SE PIERDEN", "pendientes, rechazos y reagendamientos")
     c = st.columns(5)
-    for col, (t, val, sub) in zip(c, [("📋 Solicitudes", entero(r.get("sol_ok")), "Órdenes del ejecutivo"),
-                                      ("🟡 Pendientes", entero(r.get("FIBRA PEND. SEPT")), "Pendientes del mes"),
-                                      ("🔁 Recontratadas", entero(r.get("recont")), "Resumen"),
-                                      ("❌ Rechazos", entero(r.get("rechazo")), "Resumen"),
-                                      ("📅 Pend. próx.", entero(r.get("PEND. OCT")), "Próximo mes")]):
+    for col, (t, val, sub) in zip(c, [("📋 Solicitudes", entero(r.get("sol_ok")), "Órdenes ingresadas"),
+                                      ("🟡 Pendientes", entero(r.get("FIBRA PEND. SEPT")), "Del mes en curso"),
+                                      ("❌ Rechazos", entero(r.get("rechazo")), "No siguieron"),
+                                      ("🔁 Recontratadas", entero(r.get("recont")), "Volvieron a contratar"),
+                                      ("📅 Pend. próx. mes", entero(r.get("PEND. OCT")), "Quedan para después")]):
         with col:
             ui.kpi(t, val, sub, "t-cyan", "")
+    with st.expander("🔁 REAGENDAMIENTOS", expanded=False):
+        bloque_reagendamientos(s)
+    with st.expander("❌ ANÁLISIS DE CANCELACIONES", expanded=False):
+        bloque_cancelaciones(s, con_tienda=False)
 
-    bloque_cancelaciones(s, con_tienda=False)
-
+    # ---- 4. El detalle, para quien lo necesite ------------------------------
     ui.seccion("📋", "DETALLE DE ÓRDENES")
     if s.empty:
         st.info("Este ejecutivo no tiene órdenes registradas en el periodo.")
